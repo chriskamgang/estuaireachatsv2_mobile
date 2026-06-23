@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "722472142130",
+    "project_id": "estuaireachats-cecd4",
+    "storage_bucket": "estuaireachats-cecd4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:722472142130:android:a65296ad19d830c145832b",
+        "android_client_info": {
+          "package_name": "com.estuaireachats.estuaire_achats"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHY9Bmu_OPBjT2nkERgEvhl09fgugJc0k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
