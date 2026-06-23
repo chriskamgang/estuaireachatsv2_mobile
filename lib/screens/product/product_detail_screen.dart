@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../core/api_service.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../data/mock_data.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
 import '../search/search_screen.dart';
 import '../cart/cart_screen.dart';
 import '../checkout/checkout_screen.dart';
+import '../auth/login_screen.dart';
 import '../messaging/chat_screen.dart';
 import '../shop/shop_screen.dart';
 
@@ -116,6 +119,25 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
   String get _shopSlug => _shopData?['slug'] ?? '';
   String get _categoryName => (_productData?['category'] as Map?)?['name'] ?? widget.product.category;
 
+  void _showReportDialog() {
+    final reasons = ['Produit contrefait', 'Contenu inapproprié', 'Prix trompeur', 'Autre'];
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Signaler ce produit', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        children: reasons.map((r) => SimpleDialogOption(
+          onPressed: () {
+            Navigator.pop(ctx);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Merci, votre signalement a été envoyé'), backgroundColor: AppColors.green, duration: Duration(seconds: 2)),
+            );
+          },
+          child: Text(r),
+        )).toList(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -177,16 +199,38 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                 const SizedBox(width: 10),
                 // Chat
                 GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ChatScreen(
-                        contactName: _seller,
-                        company: _seller,
-                        conversationId: '',
-                      ),
-                    ),
-                  ),
+                  onTap: () async {
+                    final auth = context.read<AuthProvider>();
+                    if (!auth.isAuthenticated) {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+                      return;
+                    }
+                    final sellerId = _shopData?['userId']?.toString() ?? '';
+                    if (sellerId.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Impossible de contacter ce vendeur'), duration: Duration(seconds: 2)),
+                      );
+                      return;
+                    }
+                    try {
+                      final res = await ApiService().post('/chat/conversations', data: {
+                        'receiverId': sellerId,
+                        'initialMessage': 'Bonjour, je suis intéressé par "$_name". Pouvez-vous me donner plus d\'informations ?',
+                      });
+                      final convId = res.data?['data']?['id']?.toString() ?? '';
+                      if (mounted) {
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => ChatScreen(contactName: _seller, company: _seller, conversationId: convId),
+                        ));
+                      }
+                    } catch (_) {
+                      if (mounted) {
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => ChatScreen(contactName: _seller, company: _seller, conversationId: ''),
+                        ));
+                      }
+                    }
+                  },
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -304,8 +348,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                         title: const Text('Partager'),
                         onTap: () {
                           Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Lien copié dans le presse-papiers'), duration: Duration(seconds: 2)),
+                          final productUrl = 'https://estuaireachats.com/product/${widget.product.id}';
+                          SharePlus.instance.share(
+                            ShareParams(
+                              text: '$_name - ${formatPrice(_price)}\n$productUrl',
+                            ),
                           );
                         },
                       ),
@@ -314,9 +361,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                         title: const Text('Signaler'),
                         onTap: () {
                           Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Signalement envoyé'), duration: Duration(seconds: 2)),
-                          );
+                          _showReportDialog();
                         },
                       ),
                       ListTile(
