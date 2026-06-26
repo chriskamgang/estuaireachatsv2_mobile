@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CLIENT_ID</key>
+	<string>722472142130-otpqth3rhk3gao251bfb23dkqeb8r9sh.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.722472142130-otpqth3rhk3gao251bfb23dkqeb8r9sh</string>
 	<key>API_KEY</key>
 	<string>AIzaSyBGv7eLeHETb5X_p0gjCKTLfM3RAnB_FCE</string>
 	<key>GCM_SENDER_ID</key>
@@ -9,7 +13,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.estuaireachats.estuaireachats</string>
+	<string>com.estuaireservices.estuaireachats</string>
 	<key>PROJECT_ID</key>
 	<string>estuaireachats-cecd4</string>
 	<key>STORAGE_BUCKET</key>
@@ -25,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:722472142130:ios:ae313b1634e6a20645832b</string>
+	<string>1:722472142130:ios:4b37f4b0c73b226a45832b</string>
 </dict>
 </plist>

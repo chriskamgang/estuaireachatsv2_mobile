@@ -63,7 +63,10 @@ class _MainScreenState extends State<MainScreen> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: (i) {
+          setState(() => _currentIndex = i);
+          if (i == 2) MessagingScreen.refresh();
+        },
         items: [
           const BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined),

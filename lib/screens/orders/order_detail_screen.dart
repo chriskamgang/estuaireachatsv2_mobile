@@ -30,7 +30,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     setState(() { _isLoading = true; _error = null; });
     try {
       final res = await ApiService().get('/orders/${widget.orderId}');
-      _order = res.data as Map<String, dynamic>;
+      final raw = res.data as Map<String, dynamic>;
+      _order = raw.containsKey('data') ? (raw['data'] as Map<String, dynamic>?) ?? raw : raw;
       setState(() { _isLoading = false; });
     } catch (e) {
       setState(() { _isLoading = false; _error = 'Erreur de chargement de la commande'; });
@@ -75,7 +76,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     _buildStatusTimeline(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
+                    _buildDeliveryTracking(),
+                    const SizedBox(height: 16),
                     _buildDeliveryAddress(),
                     const SizedBox(height: 16),
                     _buildProductList(),
@@ -100,9 +103,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     final steps = <Map<String, dynamic>>[
       {'title': 'Commande passée', 'subtitle': createdAt.isNotEmpty ? createdAt : 'En attente', 'completed': true},
-      {'title': 'Paiement confirmé', 'subtitle': confirmedAt.isNotEmpty ? confirmedAt : 'En attente', 'completed': ['CONFIRMED', 'SHIPPED', 'DELIVERED'].contains(status)},
-      {'title': 'En préparation', 'subtitle': confirmedAt.isNotEmpty ? confirmedAt : 'En attente', 'completed': ['CONFIRMED', 'SHIPPED', 'DELIVERED'].contains(status)},
-      {'title': 'Expédié', 'subtitle': shippedAt.isNotEmpty ? shippedAt : 'En attente', 'completed': ['SHIPPED', 'DELIVERED'].contains(status)},
+      {'title': 'Paiement confirmé', 'subtitle': confirmedAt.isNotEmpty ? confirmedAt : 'En attente', 'completed': ['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'].contains(status)},
+      {'title': 'En préparation', 'subtitle': confirmedAt.isNotEmpty ? confirmedAt : 'En attente', 'completed': ['CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED'].contains(status)},
+      {'title': 'Livreur en route', 'subtitle': status == 'PROCESSING' ? 'Merci E assigné' : (shippedAt.isNotEmpty ? shippedAt : 'En attente'), 'completed': ['PROCESSING', 'SHIPPED', 'DELIVERED'].contains(status)},
+      {'title': 'En cours de livraison', 'subtitle': shippedAt.isNotEmpty ? shippedAt : 'En attente', 'completed': ['SHIPPED', 'DELIVERED'].contains(status)},
       {'title': 'Livré', 'subtitle': deliveredAt.isNotEmpty ? deliveredAt : 'En attente', 'completed': status == 'DELIVERED'},
     ];
 
@@ -129,6 +133,110 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               isLast: i == steps.length - 1,
             );
           }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeliveryTracking() {
+    final status = (_order?['status'] ?? '').toString().toUpperCase();
+    if (!['PROCESSING', 'SHIPPED', 'DELIVERED'].contains(status)) return const SizedBox.shrink();
+
+    String statusTitle;
+    String statusMessage;
+    IconData statusIcon;
+    Color statusColor;
+
+    switch (status) {
+      case 'PROCESSING':
+        statusTitle = 'Livreur assigné';
+        statusMessage = 'Un livreur Merci E est en route vers la boutique pour récupérer votre colis.';
+        statusIcon = Icons.delivery_dining;
+        statusColor = AppColors.orange;
+        break;
+      case 'SHIPPED':
+        statusTitle = 'Colis en route';
+        statusMessage = 'Votre colis a été récupéré et est en route vers vous.';
+        statusIcon = Icons.local_shipping;
+        statusColor = AppColors.blue;
+        break;
+      case 'DELIVERED':
+        statusTitle = 'Livré';
+        statusMessage = 'Votre colis a été livré avec succès.';
+        statusIcon = Icons.check_circle;
+        statusColor = AppColors.green;
+        break;
+      default:
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: statusColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(statusIcon, size: 22, color: statusColor),
+              const SizedBox(width: 10),
+              Text(statusTitle, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: statusColor)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(statusMessage, style: const TextStyle(fontSize: 13, color: AppColors.gray2, height: 1.4)),
+          if (status == 'PROCESSING' || status == 'SHIPPED') ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.delivery_dining, color: statusColor, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Livraison Merci E', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text(
+                          status == 'PROCESSING'
+                            ? 'Le livreur arrive bientôt à la boutique'
+                            : 'Le livreur est en chemin vers vous',
+                          style: const TextStyle(fontSize: 12, color: AppColors.gray3),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.green.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.phone, color: AppColors.green, size: 18),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

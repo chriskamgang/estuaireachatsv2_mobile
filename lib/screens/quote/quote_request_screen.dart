@@ -136,14 +136,23 @@ class _QuoteRequestScreenState extends State<QuoteRequestScreen> {
     setState(() => _submitting = true);
 
     try {
+      final detailsParts = <String>[
+        'Produit: ${_productNameController.text.trim()}',
+        if (_descriptionController.text.trim().isNotEmpty) 'Description: ${_descriptionController.text.trim()}',
+        'Categorie: $_selectedCategoryName',
+        'Quantite: ${_quantityController.text.trim()} $_selectedUnit',
+        if (_budgetMinController.text.trim().isNotEmpty || _budgetMaxController.text.trim().isNotEmpty)
+          'Budget: ${_budgetMinController.text.trim().isNotEmpty ? _budgetMinController.text.trim() : "?"} - ${_budgetMaxController.text.trim().isNotEmpty ? _budgetMaxController.text.trim() : "?"} FCFA',
+        'Delai: $_selectedDelay',
+        if (_deliveryLocationController.text.trim().isNotEmpty) 'Destination: ${_deliveryLocationController.text.trim()}',
+        if (_companyController.text.trim().isNotEmpty) 'Entreprise: ${_companyController.text.trim()}',
+        if (_messageController.text.trim().isNotEmpty) 'Message: ${_messageController.text.trim()}',
+        'Contact: ${_nameController.text.trim()}, ${_emailController.text.trim()}${_phoneController.text.trim().isNotEmpty ? ", ${_phoneController.text.trim()}" : ""}',
+      ];
+
       await ApiService().post('/rfq', data: {
-        'categoryId': _selectedCategoryId,
-        'productName': _productNameController.text.trim(),
         'quantity': int.tryParse(_quantityController.text.trim()) ?? 1,
-        'unit': _selectedUnit.toLowerCase(),
-        'description': _descriptionController.text.trim(),
-        'maxBudget': int.tryParse(_budgetMaxController.text.trim()),
-        'deliveryDelay': _selectedDelay,
+        'details': detailsParts.join('\n'),
       });
 
       if (!mounted) return;

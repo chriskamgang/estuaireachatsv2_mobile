@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/theme.dart';
 import 'main_screen.dart';
 
@@ -40,7 +41,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     ),
   ];
 
-  void _goToMain() {
+  void _goToMain() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_seen', true);
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const MainScreen()),
     );

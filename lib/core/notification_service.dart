@@ -21,6 +21,10 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  /// Callback de navigation quand l'utilisateur tape sur une notification.
+  /// Le payload contient des infos sur l'action a effectuer (ex: "search:terme").
+  static void Function(String payload)? onNotificationTap;
+
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -78,8 +82,10 @@ class NotificationService {
   }
 
   void _onNotificationTapped(NotificationResponse response) {
-    // Navigation au tap : peut etre etendu avec go_router si besoin
-    print('Notification tapped: ${response.payload}');
+    final payload = response.payload;
+    if (payload != null && payload.isNotEmpty && onNotificationTap != null) {
+      onNotificationTap!(payload);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -189,6 +195,33 @@ class NotificationService {
       );
     } catch (e) {
       print('showLocalNotification error: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verifie s'il y a de nouveaux produits pour la derniere recherche
+  // ---------------------------------------------------------------------------
+
+  Future<void> checkSearchNotification() async {
+    try {
+      final token = await ApiService().getToken();
+      if (token == null) return;
+
+      final response = await ApiService().get('/users/me/search-notification');
+      final data = response.data['data'];
+
+      if (data != null && data['newCount'] != null && data['newCount'] > 0) {
+        final query = data['query'] as String;
+        final newCount = data['newCount'] as int;
+
+        await showLocalNotification(
+          title: 'EstuaireAchats',
+          body: "Nouveaux resultats pour '$query' — $newCount nouveaux produits disponibles",
+          payload: 'search:$query',
+        );
+      }
+    } catch (e) {
+      print('checkSearchNotification error: $e');
     }
   }
 

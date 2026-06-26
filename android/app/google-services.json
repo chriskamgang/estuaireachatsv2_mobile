@@ -12,7 +12,12 @@
           "package_name": "com.estuaireachats.estuaire_achats"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "722472142130-8l8nf0qt9gr32ctv4cl22ju0gotia48r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBHY9Bmu_OPBjT2nkERgEvhl09fgugJc0k"
@@ -20,7 +25,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "722472142130-8l8nf0qt9gr32ctv4cl22ju0gotia48r.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "722472142130-6sb5l3ua4fjpgak5rcljsknl8eui9s6o.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.estuaireachats.estuaireachats"
+              }
+            }
+          ]
         }
       }
     }

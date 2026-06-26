@@ -5,7 +5,10 @@ import '../../data/mock_data.dart';
 import '../product/product_detail_screen.dart';
 
 class AiSourcingScreen extends StatefulWidget {
-  const AiSourcingScreen({super.key});
+  /// Requete initiale pre-remplie (optionnelle, depuis le home screen)
+  final String? initialQuery;
+
+  const AiSourcingScreen({super.key, this.initialQuery});
 
   @override
   State<AiSourcingScreen> createState() => _AiSourcingScreenState();
@@ -25,6 +28,12 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
   bool _hasSearched = false;
   String? _error;
   List<_SourcingResult> _results = [];
+
+  /// Message de l'IA affiche au-dessus des resultats
+  String? _aiMessage;
+
+  /// Suggestions de recherche retournees par l'IA
+  List<String> _aiSuggestions = [];
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -54,6 +63,12 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
     _pulseAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    // Si une requete initiale est fournie, la pre-remplir et lancer la recherche
+    if (widget.initialQuery != null && widget.initialQuery!.isNotEmpty) {
+      _queryController.text = widget.initialQuery!;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _performSearch());
+    }
   }
 
   @override
@@ -75,6 +90,8 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
       _hasSearched = true;
       _error = null;
       _results = [];
+      _aiMessage = null;
+      _aiSuggestions = [];
     });
     _pulseController.repeat(reverse: true);
 
@@ -91,12 +108,32 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
         body['budgetMax'] = double.tryParse(_budgetMaxController.text);
       }
 
-      final res = await ApiService().post('/ai-sourcing/search', data: body);
-      final data = res.data['data'] as List? ?? [];
+      // Appel au endpoint IA (avec fallback cote serveur si Gemini echoue)
+      final res = await ApiService().post('/ai-sourcing/ai-search', data: body);
+
+      // Gerer les deux formats de reponse possibles :
+      // - Format IA : { data: { aiMessage, suggestions, products } }
+      // - Format fallback : { data: [...] } (liste de produits directe)
+      final responseData = res.data['data'];
+      List<dynamic> productsData;
+      String? aiMessage;
+      List<String> suggestions = [];
+
+      if (responseData is Map<String, dynamic> && responseData.containsKey('products')) {
+        // Reponse IA structuree
+        aiMessage = responseData['aiMessage'] as String?;
+        suggestions = (responseData['suggestions'] as List?)?.cast<String>() ?? [];
+        productsData = responseData['products'] as List? ?? [];
+      } else {
+        // Fallback : la reponse est directement une liste de produits
+        productsData = responseData is List ? responseData : [];
+      }
 
       if (mounted) {
         setState(() {
-          _results = data.map((p) {
+          _aiMessage = aiMessage;
+          _aiSuggestions = suggestions;
+          _results = productsData.map((p) {
             final images = p['images'] as List? ?? [];
             final mainImg = images.isNotEmpty
                 ? images[0]['url'] as String
@@ -647,10 +684,98 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
 
   // ─── Results list ───────────────────────────────────────────
 
+  /// Bulle de message IA affichee au-dessus des resultats
+  Widget _buildAiMessageBubble() {
+    if (_aiMessage == null || _aiMessage!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F4FD),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFB3DAF1), width: 0.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AppColors.blue.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.smart_toy_outlined, size: 16, color: AppColors.blue),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _aiMessage!,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.dark,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Chips de suggestions IA cliquables
+  Widget _buildAiSuggestionChips() {
+    if (_aiSuggestions.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: _aiSuggestions.map((suggestion) {
+          return GestureDetector(
+            onTap: () {
+              _queryController.text = suggestion;
+              setState(() {});
+              _performSearch();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppColors.blue.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.blue.withOpacity(0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.auto_awesome, size: 12, color: AppColors.blue),
+                  const SizedBox(width: 4),
+                  Text(
+                    suggestion,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.blue,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildResultsList() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Bulle de message IA
+        _buildAiMessageBubble(),
+        // Suggestions IA cliquables
+        _buildAiSuggestionChips(),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Text(

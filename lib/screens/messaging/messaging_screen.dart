@@ -9,6 +9,12 @@ import 'chat_screen.dart';
 class MessagingScreen extends StatefulWidget {
   const MessagingScreen({super.key});
 
+  static final refreshNotifier = ValueNotifier<int>(0);
+
+  static void refresh() {
+    refreshNotifier.value++;
+  }
+
   @override
   State<MessagingScreen> createState() => _MessagingScreenState();
 }
@@ -26,10 +32,16 @@ class _MessagingScreenState extends State<MessagingScreen> {
   void initState() {
     super.initState();
     _loadConversations();
+    MessagingScreen.refreshNotifier.addListener(_onRefresh);
+  }
+
+  void _onRefresh() {
+    _loadConversations();
   }
 
   @override
   void dispose() {
+    MessagingScreen.refreshNotifier.removeListener(_onRefresh);
     _searchController.dispose();
     super.dispose();
   }

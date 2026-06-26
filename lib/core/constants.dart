@@ -1,5 +1,5 @@
 class ApiConstants {
-  static const baseUrl = 'http://localhost:3001/api/v1';
+  static const baseUrl = 'https://backend.estuaireachats.com/api/v1';
 }
 
 class AppConstants {

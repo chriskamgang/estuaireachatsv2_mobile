@@ -1,26 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
+import '../../core/api_service.dart';
 import '../../core/theme.dart';
 import 'edit_address_screen.dart';
-
-class _MockAddress {
-  final String id;
-  final String name;
-  final String phone;
-  final String address;
-  final String city;
-  final String country;
-  final bool isDefault;
-
-  const _MockAddress({
-    required this.id,
-    required this.name,
-    required this.phone,
-    required this.address,
-    required this.city,
-    required this.country,
-    this.isDefault = false,
-  });
-}
 
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
@@ -30,25 +14,32 @@ class AddressesScreen extends StatefulWidget {
 }
 
 class _AddressesScreenState extends State<AddressesScreen> {
-  final List<_MockAddress> _addresses = [
-    const _MockAddress(
-      id: '1',
-      name: 'Jean-Paul Mbarga',
-      phone: '+237 6 90 12 34 56',
-      address: 'Rue de la Joie, Quartier Akwa',
-      city: 'Douala',
-      country: 'Cameroun',
-      isDefault: true,
-    ),
-    const _MockAddress(
-      id: '2',
-      name: 'Jean-Paul Mbarga',
-      phone: '+237 6 77 88 99 00',
-      address: 'Avenue Kennedy, Quartier Bastos',
-      city: 'Yaounde',
-      country: 'Cameroun',
-    ),
-  ];
+  bool _isLoading = true;
+  String? _error;
+  List<Map<String, dynamic>> _addresses = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAddresses();
+  }
+
+  Future<void> _loadAddresses() async {
+    setState(() { _isLoading = true; _error = null; });
+    try {
+      final res = await ApiService().get('/addresses');
+      final List data = res.data['data'] ?? [];
+      setState(() {
+        _addresses = data.cast<Map<String, dynamic>>();
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _error = 'Impossible de charger les adresses';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,9 +53,27 @@ class _AddressesScreenState extends State<AddressesScreen> {
           ),
         ],
       ),
-      body: _addresses.isEmpty
-          ? _buildEmptyState()
-          : ListView.separated(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.orange))
+          : _error != null
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 48, color: AppColors.red),
+                      const SizedBox(height: 12),
+                      Text(_error!, style: const TextStyle(fontSize: 14, color: AppColors.gray2)),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: _loadAddresses,
+                        child: const Text('Reessayer', style: TextStyle(color: AppColors.orange)),
+                      ),
+                    ],
+                  ),
+                )
+              : _addresses.isEmpty
+                  ? _buildEmptyState()
+                  : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: _addresses.length,
               separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -103,13 +112,21 @@ class _AddressesScreenState extends State<AddressesScreen> {
     );
   }
 
-  Widget _buildAddressCard(_MockAddress address) {
+  Widget _buildAddressCard(Map<String, dynamic> address) {
+    final name = address['fullName'] ?? '';
+    final phone = address['phone'] ?? '';
+    final addr = address['address'] ?? '';
+    final city = address['city'] ?? '';
+    final country = address['country'] ?? 'Cameroun';
+    final isDefault = address['isDefault'] == true;
+    final id = address['id']?.toString() ?? '';
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: address.isDefault ? AppColors.orange.withOpacity(0.4) : AppColors.gray5),
+        border: Border.all(color: isDefault ? AppColors.orange.withOpacity(0.4) : AppColors.gray5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,9 +134,9 @@ class _AddressesScreenState extends State<AddressesScreen> {
           Row(
             children: [
               Expanded(
-                child: Text(address.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                child: Text(name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
               ),
-              if (address.isDefault)
+              if (isDefault)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
@@ -131,48 +148,45 @@ class _AddressesScreenState extends State<AddressesScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(address.phone, style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
+          Text(phone, style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
           const SizedBox(height: 4),
-          Text(address.address, style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
-          Text('${address.city}, ${address.country}', style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
+          Text(addr, style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
+          Text('$city, $country', style: const TextStyle(fontSize: 13, color: AppColors.gray2)),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               IconButton(
-                onPressed: () {
+                onPressed: () async {
                   final addressData = AddressData(
-                    id: address.id,
-                    name: address.name,
-                    phone: address.phone,
-                    address: address.address,
-                    city: address.city,
-                    country: address.country,
-                    isDefault: address.isDefault,
+                    id: id,
+                    name: name,
+                    phone: phone,
+                    address: addr,
+                    city: city,
+                    country: country,
+                    isDefault: isDefault,
                   );
-                  Navigator.of(context).push(
+                  await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => EditAddressScreen(
                         address: addressData,
-                        onSave: (updated) {
-                          setState(() {
-                            final idx = _addresses.indexWhere((a) => a.id == updated.id);
-                            if (idx != -1) {
-                              _addresses[idx] = _MockAddress(
-                                id: updated.id,
-                                name: updated.name,
-                                phone: updated.phone,
-                                address: updated.address,
-                                city: updated.city,
-                                country: updated.country,
-                                isDefault: updated.isDefault,
-                              );
-                            }
-                          });
+                        onSave: (updated) async {
+                          try {
+                            await ApiService().patch('/addresses/$id', data: {
+                              'fullName': updated.name,
+                              'phone': updated.phone,
+                              'address': updated.address,
+                              'city': updated.city,
+                              'country': updated.country,
+                              'isDefault': updated.isDefault,
+                            });
+                          } catch (_) {}
                         },
                       ),
                     ),
                   );
+                  _loadAddresses();
                 },
                 icon: const Icon(Icons.edit_outlined, size: 20, color: AppColors.gray3),
                 constraints: const BoxConstraints(),
@@ -187,7 +201,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       title: const Text('Supprimer l\'adresse ?', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                       content: Text(
-                        'Voulez-vous supprimer l\'adresse de ${address.name} ?',
+                        'Voulez-vous supprimer l\'adresse de $name ?',
                         style: const TextStyle(fontSize: 14, color: AppColors.gray2),
                       ),
                       actions: [
@@ -196,9 +210,18 @@ class _AddressesScreenState extends State<AddressesScreen> {
                           child: const Text('Annuler', style: TextStyle(color: AppColors.gray2)),
                         ),
                         TextButton(
-                          onPressed: () {
+                          onPressed: () async {
                             Navigator.pop(ctx);
-                            setState(() => _addresses.removeWhere((a) => a.id == address.id));
+                            try {
+                              await ApiService().delete('/addresses/$id');
+                              _loadAddresses();
+                            } catch (_) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Erreur lors de la suppression')),
+                                );
+                              }
+                            }
                           },
                           child: const Text('Supprimer', style: TextStyle(color: AppColors.red, fontWeight: FontWeight.w600)),
                         ),
@@ -223,8 +246,41 @@ class _AddressesScreenState extends State<AddressesScreen> {
     final addressController = TextEditingController();
     String selectedCity = 'Douala';
     bool isDefault = false;
+    LatLng markerPosition = const LatLng(4.0511, 9.7679);
 
     final cities = ['Douala', 'Yaounde', 'Bafoussam', 'Bamenda', 'Garoua', 'Kribi', 'Limbe'];
+
+    Future<void> reverseGeocode(LatLng position, void Function(void Function()) setSheetState) async {
+      const apiKey = 'AIzaSyAffUHSFli6kMnjkfJOKBGO6AN828ixJPo';
+      final url = 'https://maps.googleapis.com/maps/api/geocode/json?latlng=${position.latitude},${position.longitude}&key=$apiKey';
+      try {
+        final response = await http.get(Uri.parse(url));
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data['results'] != null && (data['results'] as List).isNotEmpty) {
+            final result = data['results'][0];
+            final formattedAddress = result['formatted_address'] as String? ?? '';
+            setSheetState(() {
+              addressController.text = formattedAddress;
+            });
+            // Try to extract city from address components
+            final components = result['address_components'] as List? ?? [];
+            for (final comp in components) {
+              final types = (comp['types'] as List?) ?? [];
+              if (types.contains('locality')) {
+                final cityName = comp['long_name'] as String? ?? '';
+                if (cities.contains(cityName)) {
+                  setSheetState(() {
+                    selectedCity = cityName;
+                  });
+                }
+                break;
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     showModalBottomSheet(
       context: context,
@@ -256,6 +312,43 @@ class _AddressesScreenState extends State<AddressesScreen> {
                     _FormField(label: 'Telephone', controller: phoneController, hint: '+237 6 XX XX XX XX', keyboardType: TextInputType.phone),
                     const SizedBox(height: 14),
                     _FormField(label: 'Adresse', controller: addressController, hint: 'Rue, quartier, numero'),
+                    const SizedBox(height: 14),
+                    const Text('Choisir sur la carte', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        height: 200,
+                        child: GoogleMap(
+                          initialCameraPosition: CameraPosition(
+                            target: markerPosition,
+                            zoom: 14,
+                          ),
+                          markers: {
+                            Marker(
+                              markerId: const MarkerId('selected'),
+                              position: markerPosition,
+                              draggable: true,
+                              onDragEnd: (newPosition) {
+                                setSheetState(() {
+                                  markerPosition = newPosition;
+                                });
+                                reverseGeocode(newPosition, setSheetState);
+                              },
+                            ),
+                          },
+                          onTap: (position) {
+                            setSheetState(() {
+                              markerPosition = position;
+                            });
+                            reverseGeocode(position, setSheetState);
+                          },
+                          myLocationButtonEnabled: false,
+                          zoomControlsEnabled: true,
+                          mapToolbarEnabled: false,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 14),
                     const Text('Ville', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
@@ -302,7 +395,31 @@ class _AddressesScreenState extends State<AddressesScreen> {
                       width: double.infinity,
                       height: 48,
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx),
+                        onPressed: () async {
+                          if (nameController.text.trim().isEmpty || addressController.text.trim().isEmpty) {
+                            return;
+                          }
+                          try {
+                            await ApiService().post('/addresses', data: {
+                              'fullName': nameController.text.trim(),
+                              'phone': phoneController.text.trim(),
+                              'address': addressController.text.trim(),
+                              'city': selectedCity,
+                              'country': 'Cameroun',
+                              'isDefault': isDefault,
+                              'latitude': markerPosition.latitude,
+                              'longitude': markerPosition.longitude,
+                            });
+                            Navigator.pop(ctx);
+                            _loadAddresses();
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Erreur lors de l\'enregistrement')),
+                              );
+                            }
+                          }
+                        },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.orange,
                           foregroundColor: AppColors.white,

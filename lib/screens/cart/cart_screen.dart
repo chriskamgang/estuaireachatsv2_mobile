@@ -4,8 +4,10 @@ import '../../core/api_service.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../data/mock_data.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/cart_provider.dart';
 import '../../widgets/product_card.dart';
+import '../auth/login_screen.dart';
 import '../checkout/checkout_screen.dart';
 import '../favorites/favorites_screen.dart';
 import '../search/search_screen.dart';
@@ -20,8 +22,8 @@ MockProduct _productFromApi(Map<String, dynamic> p) {
     id: p['id']?.toString() ?? '',
     name: p['name'] ?? '',
     image: mainImg,
-    priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-    priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+    priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+    priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
     moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
     seller: shop?['name'] ?? '',
     origin: p['origin'] ?? 'CM',
@@ -101,6 +103,13 @@ class CartScreen extends StatelessWidget {
                   const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: cart.isEmpty ? null : () {
+                      final isAuth = context.read<AuthProvider>().isAuthenticated;
+                      if (!isAuth) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                        );
+                        return;
+                      }
                       Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const CheckoutScreen()),
                       );

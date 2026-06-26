@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/theme.dart';
+import '../core/notification_service.dart';
+import '../main.dart' show navigatorKey;
+import '../providers/auth_provider.dart';
+import 'main_screen.dart';
 import 'onboarding_screen.dart';
+import 'search/search_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -29,19 +36,64 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     );
     _controller.forward();
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const OnboardingScreen(),
-            transitionsBuilder: (_, animation, __, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 500),
+    _initAndNavigate();
+  }
+
+  Future<void> _initAndNavigate() async {
+    final authProvider = context.read<AuthProvider>();
+
+    // Load user session and wait minimum 3 seconds for splash animation
+    await Future.wait([
+      authProvider.loadUser(),
+      Future.delayed(const Duration(seconds: 3)),
+    ]);
+
+    if (!mounted) return;
+
+    Widget destination;
+    if (authProvider.isAuthenticated) {
+      destination = const MainScreen();
+      // Verifier s'il y a des nouveaux produits pour la derniere recherche
+      _checkSearchNotifications();
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      final onboardingSeen = prefs.getBool('onboarding_seen') ?? false;
+      if (onboardingSeen) {
+        destination = const MainScreen();
+      } else {
+        destination = const OnboardingScreen();
+      }
+    }
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => destination,
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        transitionDuration: const Duration(milliseconds: 500),
+      ),
+    );
+  }
+
+  /// Verifie les notifications de recherche et configure le callback de navigation.
+  void _checkSearchNotifications() {
+    // Configure le callback pour naviguer vers la recherche au clic sur la notification
+    NotificationService.onNotificationTap = (payload) {
+      if (payload.startsWith('search:')) {
+        final query = payload.substring(7);
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => SearchScreen(initialQuery: query),
           ),
         );
       }
-    });
+    };
+
+    // Lancer la verification en arriere-plan (fire-and-forget)
+    NotificationService().checkSearchNotification();
   }
 
   @override

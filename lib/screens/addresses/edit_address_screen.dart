@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
 import '../../core/theme.dart';
 
 class AddressData {
@@ -44,6 +47,9 @@ class _EditAddressScreenState extends State<EditAddressScreen> {
   late bool _isDefault;
 
   final List<String> _cities = ['Douala', 'Yaounde', 'Bafoussam', 'Bamenda', 'Garoua', 'Kribi', 'Limbe'];
+  late LatLng _markerPosition;
+
+  static const _apiKey = 'AIzaSyAffUHSFli6kMnjkfJOKBGO6AN828ixJPo';
 
   @override
   void initState() {
@@ -53,6 +59,38 @@ class _EditAddressScreenState extends State<EditAddressScreen> {
     _addressController = TextEditingController(text: widget.address.address);
     _selectedCity = _cities.contains(widget.address.city) ? widget.address.city : _cities.first;
     _isDefault = widget.address.isDefault;
+    // Default map center based on city
+    _markerPosition = const LatLng(4.0511, 9.7679); // Douala default
+  }
+
+  Future<void> _reverseGeocode(LatLng position) async {
+    final url = 'https://maps.googleapis.com/maps/api/geocode/json?latlng=${position.latitude},${position.longitude}&key=$_apiKey';
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['results'] != null && (data['results'] as List).isNotEmpty) {
+          final result = data['results'][0];
+          final formattedAddress = result['formatted_address'] as String? ?? '';
+          setState(() {
+            _addressController.text = formattedAddress;
+          });
+          final components = result['address_components'] as List? ?? [];
+          for (final comp in components) {
+            final types = (comp['types'] as List?) ?? [];
+            if (types.contains('locality')) {
+              final cityName = comp['long_name'] as String? ?? '';
+              if (_cities.contains(cityName)) {
+                setState(() {
+                  _selectedCity = cityName;
+                });
+              }
+              break;
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -106,6 +144,43 @@ class _EditAddressScreenState extends State<EditAddressScreen> {
                   _buildField('Telephone', _phoneController, hint: '+237 6 XX XX XX XX', keyboardType: TextInputType.phone),
                   const SizedBox(height: 14),
                   _buildField('Adresse', _addressController, hint: 'Rue, quartier, numero'),
+                  const SizedBox(height: 14),
+                  const Text('Choisir sur la carte', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      height: 200,
+                      child: GoogleMap(
+                        initialCameraPosition: CameraPosition(
+                          target: _markerPosition,
+                          zoom: 14,
+                        ),
+                        markers: {
+                          Marker(
+                            markerId: const MarkerId('selected'),
+                            position: _markerPosition,
+                            draggable: true,
+                            onDragEnd: (newPosition) {
+                              setState(() {
+                                _markerPosition = newPosition;
+                              });
+                              _reverseGeocode(newPosition);
+                            },
+                          ),
+                        },
+                        onTap: (position) {
+                          setState(() {
+                            _markerPosition = position;
+                          });
+                          _reverseGeocode(position);
+                        },
+                        myLocationButtonEnabled: false,
+                        zoomControlsEnabled: true,
+                        mapToolbarEnabled: false,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 14),
                   const Text('Ville', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),

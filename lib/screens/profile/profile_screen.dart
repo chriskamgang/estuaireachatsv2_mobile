@@ -12,6 +12,7 @@ import '../favorites/favorites_screen.dart';
 import '../settings/settings_screen.dart';
 import '../addresses/addresses_screen.dart';
 import '../quote/quote_request_screen.dart';
+import '../quote/my_quotes_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../wallet/wallet_screen.dart';
 import '../history/browsing_history_screen.dart';
@@ -68,8 +69,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               id: p['id']?.toString() ?? '',
               name: p['name'] ?? '',
               image: mainImg,
-              priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-              priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+              priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+              priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
               moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
               seller: shop?['name'] ?? '',
               origin: p['origin'] ?? 'CM',
@@ -177,6 +178,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ─── Helper: require auth or redirect to login ──────────
+  void _requireAuth(VoidCallback action) {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isAuthenticated) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      return;
+    }
+    action();
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -190,12 +203,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _buildHeader(context, auth),
             const SizedBox(height: 10),
             _buildShortcutTiles(),
-            const SizedBox(height: 10),
-            _buildPaymentBanner(),
-            const SizedBox(height: 10),
-            _buildOrdersSection(),
-            const SizedBox(height: 10),
-            _buildPaymentFinancing(),
+            if (auth.isAuthenticated) ...[
+              const SizedBox(height: 10),
+              _buildPaymentBanner(),
+              const SizedBox(height: 10),
+              _buildOrdersSection(),
+              const SizedBox(height: 10),
+              _buildPaymentFinancing(),
+            ],
             const SizedBox(height: 10),
             _buildMoreFeatures(),
             const SizedBox(height: 10),
@@ -245,7 +260,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _HeaderIconBadge(
                     icon: Icons.notifications_outlined,
                     badgeCount: notifCount,
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+                    onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotificationsScreen()))),
                   ),
                   const SizedBox(width: 16),
                   _HeaderIcon(
@@ -372,20 +387,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
             icon: Icons.favorite_outline,
             label: 'Favoris',
             badge: _favoritesCount > 0 ? '$_favoritesCount article${_favoritesCount > 1 ? 's' : ''}' : null,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FavoritesScreen())),
+            onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FavoritesScreen()))),
           ),
           // ✅ Bouton 2: Historique → BrowsingHistoryScreen
           _ShortcutTile(
             icon: Icons.access_time,
             label: 'Historique',
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowsingHistoryScreen())),
+            onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowsingHistoryScreen()))),
           ),
           // ✅ Bouton 3: Coupons → CouponsScreen
           _ShortcutTile(
             icon: Icons.confirmation_number_outlined,
             label: 'Coupons',
             badge: _couponsCount > 0 ? '$_couponsCount coupon${_couponsCount > 1 ? 's' : ''}' : null,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CouponsScreen())),
+            onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CouponsScreen()))),
           ),
         ],
       ),
@@ -438,7 +453,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.dark),
               ),
               GestureDetector(
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen())),
+                onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen()))),
                 child: Row(
                   children: [
                     Text('Voir tout', style: TextStyle(fontSize: 13, color: AppColors.orange)),
@@ -473,11 +488,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
           // Order status grid
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: const [
-              _OrderStatusItem(icon: Icons.pending_outlined, label: 'En attente'),
-              _OrderStatusItem(icon: Icons.local_shipping_outlined, label: 'Expedie'),
-              _OrderStatusItem(icon: Icons.check_circle_outline, label: 'Livre'),
-              _OrderStatusItem(icon: Icons.replay, label: 'Retour'),
+            children: [
+              _OrderStatusItem(
+                icon: Icons.pending_outlined,
+                label: 'En attente',
+                onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen()))),
+              ),
+              _OrderStatusItem(
+                icon: Icons.local_shipping_outlined,
+                label: 'Expedie',
+                onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen()))),
+              ),
+              _OrderStatusItem(
+                icon: Icons.check_circle_outline,
+                label: 'Livre',
+                onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen()))),
+              ),
+              _OrderStatusItem(
+                icon: Icons.replay,
+                label: 'Retour',
+                onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen()))),
+              ),
             ],
           ),
         ],
@@ -540,37 +571,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
       {
         'icon': Icons.account_balance_wallet_outlined,
         'label': 'Portefeuille',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WalletScreen()))),
       },
       {
         'icon': Icons.location_on_outlined,
         'label': "Adresse d'expédition",
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddressesScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddressesScreen()))),
       },
       {
         'icon': Icons.article_outlined,
         'label': 'Infos fiscales',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TaxInfoScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TaxInfoScreen()))),
       },
       {
         'icon': Icons.help_outline,
         'label': 'Demandes de renseignement',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SupportScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SupportScreen()))),
       },
       {
         'icon': Icons.card_membership,
         'label': 'Abonnement',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SubscriptionScreen()))),
       },
       {
         'icon': Icons.request_quote_outlined,
         'label': 'Demandes de devis',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuoteRequestScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MyQuotesScreen()))),
       },
       {
         'icon': Icons.verified_outlined,
         'label': 'Certificats',
-        'action': () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CertificatesScreen())),
+        'action': () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CertificatesScreen()))),
       },
     ];
 
@@ -631,7 +662,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildReferralBanner() {
     return GestureDetector(
       // ✅ Bouton 4: Parrainage → ReferralScreen
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReferralScreen())),
+      onTap: () => _requireAuth(() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ReferralScreen()))),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
         padding: const EdgeInsets.all(16),
@@ -929,13 +960,14 @@ class _ShortcutTile extends StatelessWidget {
 class _OrderStatusItem extends StatelessWidget {
   final IconData icon;
   final String label;
+  final VoidCallback? onTap;
 
-  const _OrderStatusItem({required this.icon, required this.label});
+  const _OrderStatusItem({required this.icon, required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OrdersScreen())),
+      onTap: onTap,
       child: Column(
         children: [
           Container(

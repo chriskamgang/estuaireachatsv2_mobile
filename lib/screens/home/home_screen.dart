@@ -12,6 +12,7 @@ import '../quote/quote_request_screen.dart';
 import '../categories/categories_screen.dart';
 import '../categories/category_products_screen.dart';
 import '../../widgets/product_card.dart';
+import '../sourcing/ai_sourcing_screen.dart';
 
 // ─── Helper: convertir un JSON produit API en MockProduct ──────
 MockProduct _productFromApi(Map<String, dynamic> p) {
@@ -20,12 +21,25 @@ MockProduct _productFromApi(Map<String, dynamic> p) {
       ? (images.firstWhere((i) => i['isMain'] == true, orElse: () => images[0]))['url'] as String
       : 'https://placehold.co/400x400/eee/999?text=No+Image';
   final shop = p['shop'] as Map<String, dynamic>?;
+  // Calculer priceMin/priceMax depuis priceTiers si disponible
+  final basePrice = (p['price'] as num?)?.toDouble() ?? 0;
+  final priceTiers = p['priceTiers'] as List?;
+  double pMin = (p['priceMin'] as num?)?.toDouble() ?? 0;
+  double pMax = (p['priceMax'] as num?)?.toDouble() ?? 0;
+  if (pMin == 0 && pMax == 0 && priceTiers != null && priceTiers.isNotEmpty) {
+    final prices = priceTiers.map((t) => (t['price'] as num).toDouble()).toList();
+    pMin = prices.reduce((a, b) => a < b ? a : b);
+    pMax = prices.reduce((a, b) => a > b ? a : b);
+  }
+  if (pMin == 0) pMin = basePrice;
+  if (pMax == 0) pMax = basePrice;
+
   return MockProduct(
     id: p['id']?.toString() ?? '',
     name: p['name'] ?? '',
     image: mainImg,
-    priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-    priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+    priceMin: pMin,
+    priceMax: pMax,
     moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
     seller: shop?['name'] ?? '',
     origin: p['origin'] ?? 'CM',
@@ -176,11 +190,52 @@ class _ProductsTabState extends State<_ProductsTab> {
   List<MockProduct> _featuredProducts = [];
   List<MockProduct> _gridProducts = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  int _lastPage = 1;
+  late ScrollController _scrollController;
 
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || _page >= _lastPage) return;
+    setState(() => _loadingMore = true);
+    try {
+      final res = await ApiService().get('/products', params: {'perPage': 20, 'sort': 'newest', 'page': _page + 1});
+      final data = res.data['data'] as List? ?? [];
+      final meta = res.data['meta'] as Map<String, dynamic>? ?? {};
+      if (mounted && data.isNotEmpty) {
+        setState(() {
+          _page = meta['page'] ?? (_page + 1);
+          _lastPage = meta['lastPage'] ?? _lastPage;
+          _gridProducts.addAll(data.map((p) => _productFromApi(p as Map<String, dynamic>)));
+          _loadingMore = false;
+        });
+      } else {
+        setState(() => _loadingMore = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingMore = false);
+    }
   }
 
   Future<void> _loadData() async {
@@ -192,11 +247,14 @@ class _ProductsTabState extends State<_ProductsTab> {
 
       final featuredData = results[0].data['data'] as List? ?? [];
       final gridData = results[1].data['data'] as List? ?? [];
+      final meta = results[1].data['meta'] as Map<String, dynamic>? ?? {};
 
       if (mounted) {
         setState(() {
           _featuredProducts = featuredData.take(4).map((p) => _productFromApi(p as Map<String, dynamic>)).toList();
           _gridProducts = gridData.map((p) => _productFromApi(p as Map<String, dynamic>)).toList();
+          _page = meta['page'] ?? 1;
+          _lastPage = meta['lastPage'] ?? 1;
           _loading = false;
         });
       }
@@ -218,6 +276,7 @@ class _ProductsTabState extends State<_ProductsTab> {
     }
 
     return ListView(
+      controller: _scrollController,
       padding: EdgeInsets.zero,
       children: [
         // 3 shortcuts
@@ -361,13 +420,50 @@ class _ProductsTabState extends State<_ProductsTab> {
               itemBuilder: (_, i) => ProductCard(product: _gridProducts[i]),
             ),
           ),
+        if (_loadingMore)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator(color: AppColors.orange, strokeWidth: 2)),
+          ),
+        if (!_loadingMore && _page >= _lastPage && _gridProducts.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(child: Text('Tous les produits sont affiches', style: TextStyle(color: AppColors.gray3, fontSize: 12))),
+          ),
         const SizedBox(height: 20),
       ],
     );
   }
 }
 
-class _AIModeTab extends StatelessWidget {
+class _AIModeTab extends StatefulWidget {
+  @override
+  State<_AIModeTab> createState() => _AIModeTabState();
+}
+
+class _AIModeTabState extends State<_AIModeTab> {
+  final _queryController = TextEditingController();
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  void _openAiSourcing([String? prefill]) {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => AiSourcingScreen(initialQuery: prefill),
+    ));
+  }
+
+  void _submitQuery() {
+    final q = _queryController.text.trim();
+    if (q.isNotEmpty) {
+      _openAiSourcing(q);
+      _queryController.clear();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -380,56 +476,74 @@ class _AIModeTab extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(color: AppColors.gray6, borderRadius: BorderRadius.circular(16)),
-              child: const Row(children: [Icon(Icons.auto_awesome, size: 14, color: AppColors.orange), SizedBox(width: 4), Text('600', style: TextStyle(fontSize: 12)), SizedBox(width: 4), Text('Gratuit', style: TextStyle(fontSize: 12, color: AppColors.orange, fontWeight: FontWeight.w700))]),
+              child: const Row(children: [Icon(Icons.auto_awesome, size: 14, color: AppColors.orange), SizedBox(width: 4), Text('Gratuit', style: TextStyle(fontSize: 12, color: AppColors.orange, fontWeight: FontWeight.w700))]),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(color: const Color(0xFFFEECEC), borderRadius: BorderRadius.circular(8)),
-          child: const Text('Essayez maintenant — 100 crédits gratuits par jour !', style: TextStyle(color: AppColors.orange, fontSize: 13, fontWeight: FontWeight.w600)),
+        GestureDetector(
+          onTap: () => _openAiSourcing(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(color: const Color(0xFFFEECEC), borderRadius: BorderRadius.circular(8)),
+            child: const Text('Essayez maintenant — Powered by Gemini AI', style: TextStyle(color: AppColors.orange, fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
         ),
         const SizedBox(height: 24),
         const Text('Sourcing intelligent avec le ', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.dark)),
         const Text('Mode IA', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.orange)),
         const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: const Color(0xFFFFF0F0), borderRadius: BorderRadius.circular(12)),
-          child: Row(
-            children: [
-              const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [Text('Nouveau', style: TextStyle(color: AppColors.orange, fontSize: 11, fontWeight: FontWeight.w700)), SizedBox(width: 8), Expanded(child: Text('Des idees a la production', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)))]),
-                SizedBox(height: 4),
-                Text('Concevez votre prochain succes avec le Mode IA', style: TextStyle(fontSize: 12, color: AppColors.gray2)),
-              ])),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(color: AppColors.orange, borderRadius: BorderRadius.circular(16)),
-                child: const Text('Tester', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-              ),
-            ],
+        GestureDetector(
+          onTap: () => _openAiSourcing(),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: const Color(0xFFFFF0F0), borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              children: [
+                const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [Text('Nouveau', style: TextStyle(color: AppColors.orange, fontSize: 11, fontWeight: FontWeight.w700)), SizedBox(width: 8), Expanded(child: Text('Des idees a la production', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)))]),
+                  SizedBox(height: 4),
+                  Text('Concevez votre prochain succes avec le Mode IA', style: TextStyle(fontSize: 12, color: AppColors.gray2)),
+                ])),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(color: AppColors.orange, borderRadius: BorderRadius.circular(16)),
+                  child: const Text('Tester', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 16),
         ...[
-          'Votre meilleur fournisseur est ici',
-          'Voir les tendances de votre marche',
-        ].map((t) => Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: AppColors.gray6, borderRadius: BorderRadius.circular(10)),
-          child: Row(children: [const Icon(Icons.auto_awesome, size: 16, color: AppColors.orange), const SizedBox(width: 10), Expanded(child: Text(t, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))), const Icon(Icons.chevron_right, color: AppColors.gray3)]),
+          ['Votre meilleur fournisseur est ici', 'Trouver les meilleurs fournisseurs au Cameroun'],
+          ['Voir les tendances de votre marche', 'Quels sont les produits tendance au Cameroun ?'],
+        ].map((item) => GestureDetector(
+          onTap: () => _openAiSourcing(item[1]),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: AppColors.gray6, borderRadius: BorderRadius.circular(10)),
+            child: Row(children: [const Icon(Icons.auto_awesome, size: 16, color: AppColors.orange), const SizedBox(width: 10), Expanded(child: Text(item[0], style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))), const Icon(Icons.chevron_right, color: AppColors.gray3)]),
+          ),
         )),
         const SizedBox(height: 16),
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: ['Recherche de fabricants vérifiés', 'Concevoir avec l\'IA', 'Recherche de produit', 'Analyser les best-sellers', 'Évaluer le potentiel du marché'].map((t) => Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(color: AppColors.gray6, borderRadius: BorderRadius.circular(20)),
-            child: Text(t, style: const TextStyle(fontSize: 13, color: AppColors.gray1)),
+          children: [
+            ['Recherche de fabricants vérifiés', 'Fabricants verifies et certifies'],
+            ['Concevoir avec l\'IA', 'Aide moi a concevoir un nouveau produit'],
+            ['Recherche de produit', ''],
+            ['Analyser les best-sellers', 'Quels sont les produits les plus vendus ?'],
+            ['Évaluer le potentiel du marché', 'Evaluer le potentiel du marche e-commerce au Cameroun'],
+          ].map((item) => GestureDetector(
+            onTap: () => _openAiSourcing(item[1].isNotEmpty ? item[1] : null),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: AppColors.gray6, borderRadius: BorderRadius.circular(20)),
+              child: Text(item[0], style: const TextStyle(fontSize: 13, color: AppColors.gray1)),
+            ),
           )).toList(),
         ),
         const SizedBox(height: 24),
@@ -439,7 +553,10 @@ class _AIModeTab extends StatelessWidget {
           child: Column(
             children: [
               TextField(
+                controller: _queryController,
                 maxLines: 3,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _submitQuery(),
                 decoration: InputDecoration(
                   hintText: 'Decrivez vos besoins...',
                   filled: true,
@@ -450,9 +567,19 @@ class _AIModeTab extends StatelessWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(Icons.camera_alt_outlined, color: AppColors.gray3),
+                  GestureDetector(
+                    onTap: () => _openAiSourcing(),
+                    child: const Icon(Icons.camera_alt_outlined, color: AppColors.gray3),
+                  ),
                   const Spacer(),
-                  Icon(Icons.mic, color: AppColors.gray3),
+                  GestureDetector(
+                    onTap: _submitQuery,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: AppColors.orange, shape: BoxShape.circle),
+                      child: const Icon(Icons.send, color: Colors.white, size: 18),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -889,20 +1016,64 @@ class _MondialTab extends StatefulWidget {
 class _MondialTabState extends State<_MondialTab> {
   List<MockProduct> _products = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  int _lastPage = 1;
+  late ScrollController _scrollController;
 
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || _page >= _lastPage) return;
+    setState(() => _loadingMore = true);
+    try {
+      final res = await ApiService().get('/products', params: {'perPage': 20, 'page': _page + 1});
+      final data = res.data['data'] as List? ?? [];
+      final meta = res.data['meta'] as Map<String, dynamic>? ?? {};
+      if (mounted && data.isNotEmpty) {
+        setState(() {
+          _page = meta['page'] ?? (_page + 1);
+          _lastPage = meta['lastPage'] ?? _lastPage;
+          _products.addAll(data.map((p) => _productFromApi(p as Map<String, dynamic>)));
+          _loadingMore = false;
+        });
+      } else {
+        setState(() => _loadingMore = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingMore = false);
+    }
   }
 
   Future<void> _loadData() async {
     try {
       final res = await ApiService().get('/products', params: {'perPage': 20});
       final data = res.data['data'] as List? ?? [];
+      final meta = res.data['meta'] as Map<String, dynamic>? ?? {};
       if (mounted) {
         setState(() {
           _products = data.map((p) => _productFromApi(p as Map<String, dynamic>)).toList();
+          _page = meta['page'] ?? 1;
+          _lastPage = meta['lastPage'] ?? 1;
           _loading = false;
         });
       }
@@ -923,6 +1094,7 @@ class _MondialTabState extends State<_MondialTab> {
     }
 
     return ListView(
+      controller: _scrollController,
       padding: EdgeInsets.zero,
       children: [
         // Country filters
@@ -962,6 +1134,17 @@ class _MondialTabState extends State<_MondialTab> {
               itemBuilder: (_, i) => ProductCard(product: _products[i]),
             ),
           ),
+        if (_loadingMore)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator(color: AppColors.orange, strokeWidth: 2)),
+          ),
+        if (!_loadingMore && _page >= _lastPage && _products.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(child: Text('Tous les produits sont affiches', style: TextStyle(color: AppColors.gray3, fontSize: 12))),
+          ),
+        const SizedBox(height: 20),
       ],
     );
   }

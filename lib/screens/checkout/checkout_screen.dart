@@ -1,15 +1,17 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_service.dart';
+import '../../core/shipping.dart';
 import '../../core/theme.dart';
 import '../../core/utils.dart';
 import '../../providers/cart_provider.dart';
 import '../main_screen.dart';
 import '../addresses/addresses_screen.dart';
 
-enum DeliveryMethod { standard, express }
+enum DeliveryMethod { standard, express, merciE }
 
 enum PaymentMethod { mtnMomo, orangeMoney, paypal }
 
@@ -36,6 +38,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   // Step 3 - Confirmation
   bool _submitting = false;
+
+  // Shipping rate (zone-based)
+  ShippingRate _shippingRate = estimateShipping('Douala', 'CM', 'Douala', 'CM');
+
+  // Merci E real-time delivery
+  bool _loadingMerciE = false;
+  double? _merciEPrice;
+  double? _merciEDistance;
+  int? _merciEDuration;
 
   // Step labels
   final List<String> _stepLabels = ['Adresse', 'Paiement', 'Confirmation'];
@@ -71,7 +82,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         setState(() {
           _defaultAddress = Map<String, dynamic>.from(defaultAddr);
           _loadingAddress = false;
+          _computeShippingRate();
         });
+        _fetchMerciEEstimate();
       } else {
         setState(() {
           _defaultAddress = null;
@@ -110,8 +123,57 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
+  void _computeShippingRate() {
+    final buyerCity = _defaultAddress?['city'] as String? ?? 'Douala';
+    final buyerCountry = _defaultAddress?['country'] as String? ?? 'Cameroun';
+    // TODO: use actual seller city from product/shop data when available
+    const sellerCity = 'Douala';
+    setState(() {
+      _shippingRate = estimateShipping(sellerCity, 'CM', buyerCity, buyerCountry);
+    });
+  }
+
+  Future<void> _fetchMerciEEstimate() async {
+    final addr = _defaultAddress;
+    if (addr == null) return;
+
+    final lat = addr['latitude'];
+    final lng = addr['longitude'];
+    if (lat == null || lng == null) return;
+
+    setState(() => _loadingMerciE = true);
+
+    try {
+      final res = await ApiService().post('/delivery/estimate', data: {
+        'pickupLat': 4.0511,
+        'pickupLng': 9.7679,
+        'dropLat': (lat as num).toDouble(),
+        'dropLng': (lng as num).toDouble(),
+      });
+
+      final data = res.data;
+      if (data['result'] == true && data['data'] != null) {
+        final d = data['data'];
+        setState(() {
+          _merciEPrice = (d['price'] as num).toDouble();
+          _merciEDistance = (d['distance'] as num).toDouble();
+          _merciEDuration = (d['duration'] as num).toInt();
+        });
+      }
+    } catch (_) {
+      // Merci E not available — leave values null
+    } finally {
+      if (mounted) setState(() => _loadingMerciE = false);
+    }
+  }
+
   double _getDeliveryFee() {
-    return _deliveryMethod == DeliveryMethod.express ? 3500 : 1500;
+    if (_deliveryMethod == DeliveryMethod.merciE) {
+      return _merciEPrice ?? _shippingRate.standardFee;
+    }
+    return _deliveryMethod == DeliveryMethod.express
+        ? _shippingRate.expressFee
+        : _shippingRate.standardFee;
   }
 
   Future<void> _confirmOrder() async {
@@ -121,65 +183,120 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final selectedItems = cart.items.where((i) => i.selected).toList();
     if (selectedItems.isEmpty) return;
 
+    // PayPal not yet supported
+    if (_paymentMethod == PaymentMethod.paypal) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PayPal sera disponible prochainement.'),
+          backgroundColor: AppColors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
-      // Determine payment method string
+      // Determine payment method string (backend enum values)
       String paymentMethodStr;
       switch (_paymentMethod) {
         case PaymentMethod.mtnMomo:
-          paymentMethodStr = 'mtn_momo';
+          paymentMethodStr = 'MTN_MOMO';
           break;
         case PaymentMethod.orangeMoney:
-          paymentMethodStr = 'orange_money';
+          paymentMethodStr = 'ORANGE_MONEY';
           break;
         case PaymentMethod.paypal:
-          paymentMethodStr = 'paypal';
+          paymentMethodStr = 'PAYPAL';
           break;
       }
 
-      // Create order
+      // Step 1: Sync local cart to backend DB cart
+      await cart.syncToBackend();
+
+      // Step 2: Create order (backend reads from DB cart)
       final orderRes = await ApiService().post('/orders', data: {
         'addressId': _defaultAddress?['id'],
-        'deliveryMethod': _deliveryMethod == DeliveryMethod.express ? 'express' : 'standard',
         'paymentMethod': paymentMethodStr,
-        'phone': _phoneController.text,
-        'items': selectedItems.map((item) => {
-          'productId': item.id,
-          'quantity': item.quantity,
-        }).toList(),
+        'shippingType': 'HOME_DELIVERY',
       });
 
-      final orderId = orderRes.data['data']?['id'];
-      final orderNumber = orderRes.data['data']?['orderNumber'] ?? 'EA-${100000 + Random().nextInt(900000)}';
+      final combinedOrderId = orderRes.data['data']?['combinedOrderId'];
+      final orderNumber = orderRes.data['data']?['orderNumber'] ?? 'ORD-${100000 + Random().nextInt(900000)}';
 
-      // Init payment if not PayPal
-      if (_paymentMethod != PaymentMethod.paypal && orderId != null) {
-        try {
-          await ApiService().post('/payments/init', data: {
-            'orderId': orderId,
-            'method': paymentMethodStr,
-            'phone': '237${_phoneController.text}',
-          });
-        } catch (_) {
-          // Payment init can fail silently, order was already created
+      // Step 3: Init payment for mobile money
+      if (combinedOrderId != null) {
+        final payRes = await ApiService().post('/payments/init', data: {
+          'combinedOrderId': combinedOrderId,
+          'method': paymentMethodStr,
+          'phoneNumber': '237${_phoneController.text}',
+          'mode': 'USSD',
+        });
+
+        final paymentData = payRes.data['data'];
+        final paymentId = paymentData?['kpayId'];
+
+        // Show payment confirmation dialog with polling
+        if (mounted) {
+          _showPaymentPendingDialog(
+            orderNumber: orderNumber.toString(),
+            paymentId: paymentId?.toString() ?? '',
+            message: payRes.data['message'] ?? 'Confirmez le paiement sur votre telephone',
+          );
         }
+        return; // Don't show success yet - wait for polling result
       }
 
+      // Fallback: no combinedOrderId (shouldn't happen normally)
       if (!mounted) return;
       setState(() => _submitting = false);
-
+      cart.clear();
       _showSuccessDialog(orderNumber.toString());
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
+      final errorMsg = e.toString().contains('DioException')
+          ? 'Erreur de connexion. Veuillez réessayer.'
+          : 'Erreur: ${e.toString()}';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Erreur lors de la création de la commande. Veuillez réessayer.'),
+        SnackBar(
+          content: Text(errorMsg),
           backgroundColor: AppColors.red,
         ),
       );
     }
+  }
+
+  void _showPaymentPendingDialog({
+    required String orderNumber,
+    required String paymentId,
+    required String message,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _PaymentPendingDialog(
+        orderNumber: orderNumber,
+        paymentId: paymentId,
+        message: message,
+        onSuccess: () {
+          Navigator.of(ctx).pop();
+          context.read<CartProvider>().clear();
+          setState(() => _submitting = false);
+          _showSuccessDialog(orderNumber);
+        },
+        onFailed: (String reason) {
+          Navigator.of(ctx).pop();
+          setState(() => _submitting = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Paiement echoue: $reason'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _showSuccessDialog(String orderNumber) {
@@ -560,19 +677,56 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           const SizedBox(height: 10),
           _buildDeliveryOption(
             method: DeliveryMethod.standard,
-            title: 'Livraison standard',
-            subtitle: '3 - 5 jours ouvrables',
-            price: 1500,
+            title: '${_shippingRate.label} - Standard',
+            subtitle: _shippingRate.standardDays,
+            price: _shippingRate.standardFee,
             icon: Icons.local_shipping_outlined,
           ),
           const SizedBox(height: 8),
           _buildDeliveryOption(
             method: DeliveryMethod.express,
-            title: 'Livraison express',
-            subtitle: '1 - 2 jours ouvrables',
-            price: 3500,
+            title: '${_shippingRate.label} - Express',
+            subtitle: _shippingRate.expressDays,
+            price: _shippingRate.expressFee,
             icon: Icons.rocket_launch_outlined,
           ),
+          if (_loadingMerciE) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.gray5),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.delivery_dining, size: 24, color: AppColors.gray3),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Merci E - Livraison express',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.dark),
+                  ),
+                  const Spacer(),
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.orange),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (!_loadingMerciE && _merciEPrice != null) ...[
+            const SizedBox(height: 8),
+            _buildDeliveryOption(
+              method: DeliveryMethod.merciE,
+              title: 'Merci E - Livraison express',
+              subtitle: '${_merciEDistance?.toStringAsFixed(1)} km • ~$_merciEDuration min',
+              price: _merciEPrice!,
+              icon: Icons.delivery_dining,
+            ),
+          ],
         ],
       ),
     );
@@ -1383,6 +1537,133 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// --- Payment Pending Dialog with polling ---
+
+class _PaymentPendingDialog extends StatefulWidget {
+  final String orderNumber;
+  final String paymentId;
+  final String message;
+  final VoidCallback onSuccess;
+  final void Function(String reason) onFailed;
+
+  const _PaymentPendingDialog({
+    required this.orderNumber,
+    required this.paymentId,
+    required this.message,
+    required this.onSuccess,
+    required this.onFailed,
+  });
+
+  @override
+  State<_PaymentPendingDialog> createState() => _PaymentPendingDialogState();
+}
+
+class _PaymentPendingDialogState extends State<_PaymentPendingDialog> {
+  Timer? _pollTimer;
+  int _elapsed = 0;
+  String _statusText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _statusText = widget.message;
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startPolling() {
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      _elapsed += 5;
+      if (_elapsed > 120) {
+        _pollTimer?.cancel();
+        widget.onFailed('Delai d\'attente depasse');
+        return;
+      }
+
+      try {
+        final res = await ApiService().get('/payments/status/${widget.paymentId}');
+        final data = res.data['data'];
+        final status = data?['status'] as String?;
+
+        if (status == 'PAID' || status == 'COMPLETED') {
+          _pollTimer?.cancel();
+          widget.onSuccess();
+        } else if (status == 'FAILED' || status == 'CANCELLED') {
+          _pollTimer?.cancel();
+          widget.onFailed(data?['failReason'] ?? 'Paiement refuse');
+        }
+      } catch (_) {
+        // Continue polling on error
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: CircularProgressIndicator(
+                color: AppColors.orange,
+                strokeWidth: 3,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Paiement en cours...',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.dark,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Icon(Icons.phone_android, size: 40, color: AppColors.orange),
+            const SizedBox(height: 12),
+            Text(
+              _statusText,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppColors.gray2,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Commande: ${widget.orderNumber}',
+              style: const TextStyle(fontSize: 12, color: AppColors.gray3),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () {
+                _pollTimer?.cancel();
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'Annuler',
+                style: TextStyle(color: AppColors.gray3, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

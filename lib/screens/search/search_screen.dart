@@ -1,6 +1,6 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import '../../core/theme.dart';
 import '../../core/api_service.dart';
 import '../../data/mock_data.dart';
@@ -31,7 +31,23 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// Enregistre la recherche en arriere-plan (fire and forget)
+  void _saveSearchHistory(String query) {
+    if (query.trim().isEmpty) return;
+    // Verifier si l'utilisateur est connecte avant d'envoyer
+    ApiService().getToken().then((token) {
+      if (token != null) {
+        ApiService()
+            .post('/search-history', data: {'query': query.trim()})
+            .catchError((_) => null);
+      }
+    });
+  }
+
   Future<void> _search(String query) async {
+    // Sauvegarder la recherche en arriere-plan
+    _saveSearchHistory(query);
+
     setState(() {
       _hasSearched = true;
       _loading = true;
@@ -60,8 +76,8 @@ class _SearchScreenState extends State<SearchScreen> {
           id: p['id']?.toString() ?? '',
           name: p['name'] ?? '',
           image: mainImg,
-          priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-          priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+          priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+          priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
           moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
           seller: shop?['name'] ?? '',
           origin: p['origin'] ?? 'CM',
@@ -137,33 +153,78 @@ class _SearchScreenState extends State<SearchScreen> {
         _loading = true;
       });
 
-      // Analyser l'image avec ML Kit
-      final inputImage = InputImage.fromFilePath(picked.path);
-      final labeler = ImageLabeler(options: ImageLabelerOptions(confidenceThreshold: 0.5));
-      final labels = await labeler.processImage(inputImage);
-      await labeler.close();
+      _controller.text = 'Recherche par image...';
 
-      if (labels.isEmpty) {
+      // Envoyer l'image au backend pour recherche visuelle CLIP
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(
+          picked.path,
+          filename: picked.name,
+        ),
+      });
+
+      final res = await ApiService().post(
+        '/ai-sourcing/image-search',
+        data: formData,
+      );
+
+      final data = res.data['data'] as List? ?? [];
+
+      if (data.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Aucun objet detecte dans cette image')),
+            const SnackBar(content: Text('Aucun produit similaire trouve')),
           );
-          setState(() => _loading = false);
+          setState(() {
+            _results = [];
+            _loading = false;
+          });
         }
         return;
       }
 
-      // Prendre les 3 meilleurs labels et les utiliser comme recherche
-      final topLabels = labels.take(3).map((l) => l.label).toList();
-      final query = topLabels.join(' ');
-      _controller.text = query;
-      await _search(query);
+      final products = data.map<MockProduct>((p) {
+        final images = p['images'] as List? ?? [];
+        final mainImg = images.isNotEmpty
+            ? (images.firstWhere((i) => i['isMain'] == true, orElse: () => images[0]))['url'] as String
+            : 'https://placehold.co/400x400/eee/999?text=No+Image';
+        final shop = p['shop'] as Map<String, dynamic>?;
+
+        return MockProduct(
+          id: p['id']?.toString() ?? '',
+          name: p['name'] ?? '',
+          image: mainImg,
+          priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+          priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+          moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
+          seller: shop?['name'] ?? '',
+          origin: p['origin'] ?? 'CM',
+          sellerYears: (shop?['yearsActive'] as num?)?.toInt() ?? 1,
+          verified: shop?['verified'] == true,
+          sold: (p['totalSold'] as num?)?.toInt() ?? 0,
+          rating: (p['rating'] as num?)?.toDouble() ?? 0,
+          reviews: (p['totalReviews'] as num?)?.toInt() ?? 0,
+          category: '',
+        );
+      }).toList();
+
+      setState(() {
+        _results = products;
+        _loading = false;
+        _controller.text = 'Resultats par image';
+      });
     } catch (e) {
       if (mounted) {
+        final message = e is DioException && e.response?.statusCode == 503
+            ? 'Le service de recherche visuelle est indisponible'
+            : 'Erreur : ${e.toString().replaceAll('Exception: ', '')}';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : ${e.toString().replaceAll('Exception: ', '')}')),
+          SnackBar(content: Text(message)),
         );
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _controller.text = '';
+        });
       }
     }
   }

@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_service.dart';
 import '../../core/theme.dart';
 import '../../data/mock_data.dart';
+import '../../providers/auth_provider.dart';
 import '../../widgets/product_card.dart';
+import '../auth/login_screen.dart';
 import '../cart/cart_screen.dart';
+import '../categories/category_products_screen.dart';
 import '../messaging/chat_screen.dart';
+import '../messaging/messaging_screen.dart';
 
 class ShopScreen extends StatefulWidget {
   final String shopName;
@@ -25,6 +30,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
 
   Map<String, dynamic> _shopData = {};
   List<MockProduct> _shopProducts = [];
+  List<Map<String, dynamic>> _shopCategories = [];
 
   @override
   void initState() {
@@ -40,7 +46,9 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
 
       if (widget.shopSlug != null && widget.shopSlug!.isNotEmpty) {
         final res = await ApiService().get('/shops/${widget.shopSlug}');
-        data = res.data as Map<String, dynamic>;
+        final raw = res.data as Map<String, dynamic>;
+        // API returns { result: true, data: shop } — extract inner data
+        data = (raw['data'] is Map<String, dynamic>) ? raw['data'] as Map<String, dynamic> : raw;
       } else {
         // Fallback: search by name
         final res = await ApiService().get('/shops', params: {'search': widget.shopName});
@@ -56,6 +64,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       _shopData = {
         'name': data['name'] ?? widget.shopName,
         'slug': data['slug'] ?? '',
+        'userId': data['userId']?.toString() ?? '',
         'rating': (data['rating'] as num?)?.toDouble() ?? 0.0,
         'totalReviews': (data['totalReviews'] as num?)?.toInt() ?? 0,
         'years': (data['yearsActive'] as num?)?.toInt() ?? 0,
@@ -99,12 +108,62 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       final apiProducts = data['products'] as List? ?? [];
       _shopProducts = apiProducts.map<MockProduct>((p) => _productFromApi(p)).toList();
 
+      // Extract unique categories from products
+      final catMap = <String, Map<String, dynamic>>{};
+      for (final p in apiProducts) {
+        final cat = p['category'] as Map<String, dynamic>?;
+        if (cat != null && cat['id'] != null) {
+          catMap[cat['id'].toString()] = cat;
+        }
+      }
+      _shopCategories = catMap.values.toList();
+
       setState(() { _isLoading = false; });
     } catch (e) {
       setState(() {
         _isLoading = false;
         _error = 'Erreur de chargement de la boutique';
       });
+    }
+  }
+
+  Future<void> _openChat() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isAuthenticated) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+      return;
+    }
+    final sellerId = _shopData['userId']?.toString() ?? '';
+    final shopName = _shopData['name'] ?? widget.shopName;
+    final shopSlug = _shopData['slug'] ?? widget.shopSlug ?? '';
+    if (sellerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impossible de contacter ce vendeur'), duration: Duration(seconds: 2)),
+      );
+      return;
+    }
+    try {
+      final res = await ApiService().post('/chat/conversations', data: {
+        'receiverId': sellerId,
+      });
+      final convId = res.data?['data']?['id']?.toString() ?? '';
+      if (mounted) {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            contactName: shopName,
+            company: shopName,
+            conversationId: convId,
+            shopSlug: shopSlug,
+          ),
+        ));
+        MessagingScreen.refresh();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Erreur lors de la création de la conversation'), duration: Duration(seconds: 2)),
+        );
+      }
     }
   }
 
@@ -118,8 +177,8 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       id: p['id']?.toString() ?? '',
       name: p['name'] ?? '',
       image: mainImg,
-      priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-      priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+      priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+      priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
       moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
       seller: shop?['name'] ?? _shopData['name'] ?? '',
       origin: p['origin'] ?? 'CM',
@@ -128,7 +187,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       sold: (p['totalSold'] as num?)?.toInt() ?? 0,
       rating: (p['rating'] as num?)?.toDouble() ?? 0,
       reviews: (p['totalReviews'] as num?)?.toInt() ?? 0,
-      category: '',
+      category: (p['category'] as Map<String, dynamic>?)?['name']?.toString() ?? '',
     );
   }
 
@@ -331,16 +390,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(width: 12),
               GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(
-                      contactName: shopName,
-                      company: shopName,
-                      conversationId: '',
-                    ),
-                  ),
-                ),
+                onTap: _openChat,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                   decoration: BoxDecoration(
@@ -1160,8 +1210,58 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
     );
   }
 
+  void _showCategoriesSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Text('Catégories', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: const Icon(Icons.close, size: 22),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            if (_shopCategories.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('Aucune catégorie', style: TextStyle(color: AppColors.gray3)),
+              )
+            else
+              ...(_shopCategories.map((cat) => ListTile(
+                leading: const Icon(Icons.category_outlined, color: AppColors.primary),
+                title: Text(cat['name'] ?? ''),
+                trailing: const Icon(Icons.chevron_right, size: 20, color: AppColors.gray3),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => CategoryProductsScreen(
+                      categoryId: cat['id'].toString(),
+                      categoryName: cat['name'] ?? '',
+                    ),
+                  ));
+                },
+              ))),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomBar(BuildContext context) {
-    final shopName = _shopData['name'] ?? widget.shopName;
     return Container(
       padding: EdgeInsets.fromLTRB(12, 10, 12, MediaQuery.of(context).padding.bottom + 10),
       decoration: const BoxDecoration(
@@ -1171,13 +1271,16 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
       child: Row(
         children: [
           // Categories button
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.list_alt, size: 22, color: AppColors.gray2),
-              SizedBox(height: 2),
-              Text('Catégories', style: TextStyle(fontSize: 10, color: AppColors.gray2)),
-            ],
+          GestureDetector(
+            onTap: _showCategoriesSheet,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.list_alt, size: 22, color: AppColors.gray2),
+                SizedBox(height: 2),
+                Text('Catégories', style: TextStyle(fontSize: 10, color: AppColors.gray2)),
+              ],
+            ),
           ),
           const SizedBox(width: 12),
           // Chat button
@@ -1185,16 +1288,7 @@ class _ShopScreenState extends State<ShopScreen> with SingleTickerProviderStateM
             child: SizedBox(
               height: 42,
               child: OutlinedButton(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(
-                      contactName: shopName,
-                      company: shopName,
-                      conversationId: '',
-                    ),
-                  ),
-                ),
+                onPressed: _openChat,
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: AppColors.dark, width: 1.5),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(21)),

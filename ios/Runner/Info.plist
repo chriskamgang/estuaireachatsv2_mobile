@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>estuaire_achats</string>
+	<string>Estuaire Achats</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -47,6 +47,19 @@
 			</array>
 		</dict>
 	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.722472142130-otpqth3rhk3gao251bfb23dkqeb8r9sh</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>722472142130-otpqth3rhk3gao251bfb23dkqeb8r9sh.apps.googleusercontent.com</string>
 	<key>NSCameraUsageDescription</key>
 	<string>EstuaireAchats utilise la camera pour la recherche de produits par image</string>
 	<key>NSPhotoLibraryUsageDescription</key>

@@ -40,6 +40,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     switch (status.toUpperCase()) {
       case 'PENDING': return 'enAttente';
       case 'CONFIRMED': return 'enAttente';
+      case 'PROCESSING': return 'expedie';
       case 'SHIPPED': return 'expedie';
       case 'DELIVERED': return 'livre';
       case 'CANCELLED': return 'annule';
@@ -289,6 +290,7 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color) = switch (status) {
       'PENDING' || 'CONFIRMED' => ('En attente', AppColors.orange),
+      'PROCESSING' => ('En livraison', AppColors.blue),
       'SHIPPED' => ('Expédié', AppColors.blue),
       'DELIVERED' => ('Livré', AppColors.green),
       'CANCELLED' => ('Annulé', AppColors.red),

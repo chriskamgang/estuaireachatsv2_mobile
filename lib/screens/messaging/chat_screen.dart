@@ -1,18 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_service.dart';
 import '../../core/theme.dart';
+import '../../providers/auth_provider.dart';
 import '../shop/shop_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String contactName;
   final String company;
   final String conversationId;
+  final String shopSlug;
+  final bool isVerified;
+  final double rating;
+  final int yearsActive;
 
   const ChatScreen({
     super.key,
     required this.contactName,
     required this.company,
     this.conversationId = '',
+    this.shopSlug = '',
+    this.isVerified = false,
+    this.rating = 0,
+    this.yearsActive = 0,
   });
 
   @override
@@ -38,7 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // No conversation ID: show local placeholder messages
       _messages.addAll([
         _ChatMessage(
-          text: 'Bonjour ! Bienvenue chez ${widget.company}. Comment puis-je vous aider ?',
+          text: 'Bonjour ! Bienvenue chez ${widget.contactName}. Comment puis-je vous aider ?',
           isMe: false,
           time: '10:00',
           type: _MessageType.text,
@@ -69,6 +79,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      final currentUserId = context.read<AuthProvider>().user?['id']?.toString() ?? '';
       final res = await ApiService().get('/chat/messages/${widget.conversationId}');
       final List data = res.data['data'] ?? [];
       final messages = <_ChatMessage>[];
@@ -88,17 +99,39 @@ class _ChatScreenState extends State<ChatScreen> {
 
         messages.add(_ChatMessage(
           text: content,
-          isMe: msg['isOwn'] == true,
+          isMe: msg['senderId']?.toString() == currentUserId,
           time: timeStr,
           type: _MessageType.text,
         ));
+      }
+
+      // If conversation is new (empty or only the buyer's initial message), prepend welcome items
+      final isNewConversation = messages.isEmpty ||
+          (messages.length == 1 && messages.first.isMe);
+
+      if (isNewConversation) {
+        final welcomeMessages = <_ChatMessage>[
+          _ChatMessage(
+            text: 'Bonjour ! Bienvenue chez ${widget.contactName}. Comment puis-je vous aider ?',
+            isMe: false,
+            time: messages.isNotEmpty ? messages.first.time : TimeOfDay.now().format(context),
+            type: _MessageType.text,
+          ),
+          _ChatMessage(
+            text: '',
+            isMe: false,
+            time: '',
+            type: _MessageType.businessCard,
+          ),
+        ];
+        messages.insertAll(0, welcomeMessages);
       }
 
       setState(() {
         _messages.clear();
         _messages.addAll(messages);
         _loading = false;
-        if (_messages.isNotEmpty) _showQuickReplies = true;
+        _showQuickReplies = isNewConversation || _messages.isNotEmpty;
       });
 
       _scrollToBottom();
@@ -408,11 +441,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      _CardInfo(icon: Icons.verified, label: 'Vérifié', color: AppColors.green),
-                      const SizedBox(width: 16),
-                      _CardInfo(icon: Icons.access_time, label: '5+ ans', color: AppColors.blue),
-                      const SizedBox(width: 16),
-                      _CardInfo(icon: Icons.star, label: '4.7/5', color: AppColors.orange),
+                      if (widget.isVerified)
+                        _CardInfo(icon: Icons.verified, label: 'Vérifié', color: AppColors.green),
+                      if (widget.isVerified)
+                        const SizedBox(width: 16),
+                      if (widget.yearsActive > 0)
+                        _CardInfo(icon: Icons.access_time, label: '${widget.yearsActive}+ ans', color: AppColors.blue),
+                      if (widget.yearsActive > 0)
+                        const SizedBox(width: 16),
+                      if (widget.rating > 0)
+                        _CardInfo(icon: Icons.star, label: '${widget.rating}/5', color: AppColors.orange),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -420,7 +458,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => ShopScreen(shopName: widget.company)));
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => ShopScreen(
+                            shopName: widget.contactName,
+                            shopSlug: widget.shopSlug.isNotEmpty ? widget.shopSlug : null,
+                          ),
+                        ));
                       },
                       icon: const Icon(Icons.storefront, size: 16),
                       label: const Text('Voir la boutique', style: TextStyle(fontSize: 12)),

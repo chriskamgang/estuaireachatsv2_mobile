@@ -11,6 +11,9 @@ import 'providers/cart_provider.dart';
 import 'providers/notification_provider.dart';
 import 'screens/splash_screen.dart';
 
+/// Cle de navigation globale pour naviguer depuis n'importe ou (ex: notifications)
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -54,11 +57,12 @@ class _EstuaireAchatsAppState extends State<EstuaireAchatsApp> {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => CartProvider()),
+        ChangeNotifierProvider(create: (_) => CartProvider()..loadCart()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: MaterialApp(
         title: 'EstuaireAchats',
+        navigatorKey: navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         home: const SplashScreen(),

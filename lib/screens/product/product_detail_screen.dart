@@ -36,6 +36,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
   List<Map<String, dynamic>> _colors = [];
   List<MockProduct> _otherProducts = [];
   Map<String, dynamic>? _shopData;
+  int _selectedTierIndex = 0;
 
   @override
   void initState() {
@@ -48,7 +49,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
     setState(() { _isLoading = true; _error = null; });
     try {
       final res = await ApiService().get('/products/${widget.product.id}');
-      final data = res.data as Map<String, dynamic>;
+      final raw = res.data as Map<String, dynamic>;
+      final data = (raw.containsKey('data') ? raw['data'] : raw) as Map<String, dynamic>;
       final images = data['images'] as List? ?? [];
       _images = images.map<String>((img) => img['url'] as String).toList();
       if (_images.isEmpty) {
@@ -92,8 +94,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
       id: p['id']?.toString() ?? '',
       name: p['name'] ?? '',
       image: mainImg,
-      priceMin: (p['price'] as num?)?.toDouble() ?? 0,
-      priceMax: (p['price'] as num?)?.toDouble() ?? 0,
+      priceMin: (p['priceMin'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
+      priceMax: (p['priceMax'] as num?)?.toDouble() ?? (p['price'] as num?)?.toDouble() ?? 0,
       moq: (p['minOrderQty'] as num?)?.toInt() ?? 1,
       seller: shop?['name'] ?? '',
       origin: p['origin'] ?? 'CM',
@@ -108,6 +110,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
 
   // Helpers to read from API data with fallback to widget.product
   double get _price => (_productData?['price'] as num?)?.toDouble() ?? widget.product.priceMin;
+  double get _selectedPrice {
+    final tiers = (_productData?['priceTiers'] as List?) ?? [];
+    if (tiers.isNotEmpty && _selectedTierIndex < tiers.length) {
+      return (tiers[_selectedTierIndex]['price'] as num).toDouble();
+    }
+    return _price;
+  }
+  int get _selectedMinQty {
+    final tiers = (_productData?['priceTiers'] as List?) ?? [];
+    if (tiers.isNotEmpty && _selectedTierIndex < tiers.length) {
+      return (tiers[_selectedTierIndex]['minQty'] as num).toInt();
+    }
+    return _moq;
+  }
   int get _moq => (_productData?['minOrderQty'] as num?)?.toInt() ?? widget.product.moq;
   String get _name => _productData?['name'] ?? widget.product.name;
   double get _rating => (_productData?['rating'] as num?)?.toDouble() ?? widget.product.rating;
@@ -220,13 +236,29 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                       final convId = res.data?['data']?['id']?.toString() ?? '';
                       if (mounted) {
                         Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => ChatScreen(contactName: _seller, company: _seller, conversationId: convId),
+                          builder: (_) => ChatScreen(
+                            contactName: _seller,
+                            company: _seller,
+                            conversationId: convId,
+                            shopSlug: _shopSlug,
+                            isVerified: _verified,
+                            rating: _rating,
+                            yearsActive: _sellerYears,
+                          ),
                         ));
                       }
                     } catch (_) {
                       if (mounted) {
                         Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => ChatScreen(contactName: _seller, company: _seller, conversationId: ''),
+                          builder: (_) => ChatScreen(
+                            contactName: _seller,
+                            company: _seller,
+                            conversationId: '',
+                            shopSlug: _shopSlug,
+                            isVerified: _verified,
+                            rating: _rating,
+                            yearsActive: _sellerYears,
+                          ),
                         ));
                       }
                     }
@@ -244,12 +276,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () {
+                      final isAuth = context.read<AuthProvider>().isAuthenticated;
+                      if (!isAuth) {
+                        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LoginScreen()));
+                        return;
+                      }
                       context.read<CartProvider>().addItem(CartItem(
                         id: p.id,
                         name: _name,
                         image: _images.isNotEmpty ? _images[0] : p.image,
-                        price: _price,
+                        price: _selectedPrice,
                         seller: _seller,
+                        quantity: _selectedMinQty,
                       ));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Ajouté au panier'), backgroundColor: AppColors.green, duration: Duration(seconds: 1)),
@@ -269,12 +307,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () {
+                      final isAuth = context.read<AuthProvider>().isAuthenticated;
+                      if (!isAuth) {
+                        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LoginScreen()));
+                        return;
+                      }
                       context.read<CartProvider>().addItem(CartItem(
                         id: p.id,
                         name: _name,
                         image: _images.isNotEmpty ? _images[0] : p.image,
-                        price: _price,
+                        price: _selectedPrice,
                         seller: _seller,
+                        quantity: _selectedMinQty,
                       ));
                       Navigator.push(
                         context,
@@ -349,10 +393,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
                         onTap: () {
                           Navigator.pop(context);
                           final productUrl = 'https://estuaireachats.com/product/${widget.product.id}';
-                          SharePlus.instance.share(
-                            ShareParams(
-                              text: '$_name - ${formatPrice(_price)}\n$productUrl',
-                            ),
+                          Share.share(
+                            '$_name - ${formatPrice(_price)}\n$productUrl',
                           );
                         },
                       ),
@@ -434,34 +476,61 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> with SingleTi
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Promo banner
-              Container(
-                margin: const EdgeInsets.all(12),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(color: const Color(0xFFFFF0F0), borderRadius: BorderRadius.circular(8)),
-                child: Row(
-                  children: [
-                    Icon(Icons.local_offer, size: 16, color: AppColors.orange),
-                    const SizedBox(width: 6),
-                    Expanded(child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: AppColors.dark), children: [
-                      TextSpan(text: 'Economisez 10 000 FCFA ', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.orange)),
-                      const TextSpan(text: 'sur les commandes de plus de 100 000 FCFA'),
-                    ]))),
-                    const Icon(Icons.chevron_right, size: 16, color: AppColors.gray3),
-                  ],
+              // Promo banner (only for wholesale products with price tiers)
+              if (((_productData?['priceTiers'] as List?) ?? []).isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(color: const Color(0xFFFFF0F0), borderRadius: BorderRadius.circular(8)),
+                  child: Row(
+                    children: [
+                      Icon(Icons.local_offer, size: 16, color: AppColors.orange),
+                      const SizedBox(width: 6),
+                      Expanded(child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: AppColors.dark), children: [
+                        TextSpan(text: 'Economisez ${formatPrice(_price * 0.2)} ', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.orange)),
+                        const TextSpan(text: 'sur les grosses commandes'),
+                      ]))),
+                      const Icon(Icons.chevron_right, size: 16, color: AppColors.gray3),
+                    ],
+                  ),
                 ),
-              ),
-              // Price tiers
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  children: [
-                    _PriceTier(price: formatPrice(_price), label: 'Commande minimale : $_moq pièces', highlighted: true),
-                    _PriceTier(price: formatPrice(_price * 0.9), label: '${_moq * 5}-${_moq * 10} pièces', highlighted: false),
-                    _PriceTier(price: formatPrice(_price * 0.8), label: '>=  ${_moq * 10} pièces', highlighted: false),
-                  ],
-                ),
-              ),
+              // Price tiers (from API or single price)
+              Builder(builder: (_) {
+                final apiTiers = (_productData?['priceTiers'] as List?) ?? [];
+                if (apiTiers.isNotEmpty) {
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: List.generate(apiTiers.length, (i) {
+                        final t = apiTiers[i];
+                        final tierPrice = (t['price'] as num).toDouble();
+                        final minQty = (t['minQty'] as num).toInt();
+                        final maxQty = t['maxQty'] as num?;
+                        final label = i == 0
+                            ? 'Commande mini...'
+                            : maxQty != null
+                                ? '$minQty-${maxQty.toInt()} pièces'
+                                : '>= $minQty pièces';
+                        return _PriceTier(
+                          price: formatPrice(tierPrice),
+                          label: label,
+                          highlighted: _selectedTierIndex == i,
+                          onTap: () => setState(() { _selectedTierIndex = i; }),
+                        );
+                      }),
+                    ),
+                  );
+                } else {
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: [
+                        _PriceTier(price: formatPrice(_price), label: 'Prix unitaire', highlighted: true),
+                      ],
+                    ),
+                  );
+                }
+              }),
               // Title
               Padding(
                 padding: const EdgeInsets.all(12),
@@ -809,25 +878,29 @@ class _PriceTier extends StatelessWidget {
   final String price;
   final String label;
   final bool highlighted;
+  final VoidCallback? onTap;
 
-  const _PriceTier({required this.price, required this.label, required this.highlighted});
+  const _PriceTier({required this.price, required this.label, required this.highlighted, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: highlighted ? const Color(0xFFF9F9F9) : AppColors.white,
-          border: Border(bottom: BorderSide(color: highlighted ? AppColors.dark : AppColors.gray5, width: highlighted ? 2 : 1)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(price, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: highlighted ? AppColors.dark : AppColors.gray1)),
-            const SizedBox(height: 2),
-            Text(label, style: TextStyle(fontSize: 10, color: AppColors.gray3), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: highlighted ? const Color(0xFFF9F9F9) : AppColors.white,
+            border: Border(bottom: BorderSide(color: highlighted ? AppColors.dark : AppColors.gray5, width: highlighted ? 2 : 1)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(price, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: highlighted ? AppColors.dark : AppColors.gray1)),
+              const SizedBox(height: 2),
+              Text(label, style: TextStyle(fontSize: 10, color: AppColors.gray3), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
         ),
       ),
     );
