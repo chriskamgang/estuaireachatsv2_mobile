@@ -34,6 +34,8 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
 
   /// Suggestions de recherche retournees par l'IA
   List<String> _aiSuggestions = [];
+  List<String> _followUpQuestions = [];
+  String? _aiIntent;
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -92,6 +94,8 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
       _results = [];
       _aiMessage = null;
       _aiSuggestions = [];
+      _followUpQuestions = [];
+      _aiIntent = null;
     });
     _pulseController.repeat(reverse: true);
 
@@ -119,11 +123,16 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
       String? aiMessage;
       List<String> suggestions = [];
 
+      String? intent;
+      List<String> followUps = [];
+
       if (responseData is Map<String, dynamic> && responseData.containsKey('products')) {
         // Reponse IA structuree
         aiMessage = responseData['aiMessage'] as String?;
         suggestions = (responseData['suggestions'] as List?)?.cast<String>() ?? [];
+        followUps = (responseData['followUpQuestions'] as List?)?.cast<String>() ?? [];
         productsData = responseData['products'] as List? ?? [];
+        intent = res.data['meta']?['intent'] as String?;
       } else {
         // Fallback : la reponse est directement une liste de produits
         productsData = responseData is List ? responseData : [];
@@ -133,6 +142,8 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
         setState(() {
           _aiMessage = aiMessage;
           _aiSuggestions = suggestions;
+          _followUpQuestions = followUps;
+          _aiIntent = intent;
           _results = productsData.map((p) {
             final images = p['images'] as List? ?? [];
             final mainImg = images.isNotEmpty
@@ -435,6 +446,7 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
     if (_isLoading) return _buildLoadingState();
     if (_error != null) return _buildErrorState();
     if (!_hasSearched) return _buildInitialState();
+    if (_aiIntent == 'help') return _buildHelpResponse();
     if (_results.isEmpty) return _buildEmptyState();
     return _buildResultsList();
   }
@@ -510,6 +522,157 @@ class _AiSourcingScreenState extends State<AiSourcingScreen>
           text,
           style: const TextStyle(fontSize: 12, color: AppColors.gray1),
         ),
+      ),
+    );
+  }
+
+  // ─── Help / conversational response ─────────────────────────
+
+  Widget _buildHelpResponse() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // AI message bubble
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F4FD),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFB3DAF1), width: 0.5),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.blue.withOpacity(0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.smart_toy_outlined, size: 18, color: AppColors.blue),
+                    ),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Assistant IA',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.dark,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _aiMessage ?? '',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppColors.dark,
+                    height: 1.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Follow-up questions
+          if (_followUpQuestions.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'Pour mieux vous aider :',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.gray2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ..._followUpQuestions.map((q) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: GestureDetector(
+                onTap: () {
+                  _queryController.text = q;
+                  setState(() {});
+                  _performSearch();
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.gray5),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.help_outline, size: 16, color: AppColors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          q,
+                          style: const TextStyle(fontSize: 13, color: AppColors.dark),
+                        ),
+                      ),
+                      Icon(Icons.arrow_forward_ios, size: 12, color: AppColors.gray3),
+                    ],
+                  ),
+                ),
+              ),
+            )),
+          ],
+
+          // Suggestions
+          if (_aiSuggestions.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Text(
+              'Recherches suggerees :',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.gray2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _aiSuggestions.map((s) => GestureDetector(
+                onTap: () {
+                  _queryController.text = s;
+                  setState(() {});
+                  _performSearch();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.orange.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.search, size: 14, color: AppColors.orange),
+                      const SizedBox(width: 4),
+                      Text(
+                        s,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.orange,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )).toList(),
+            ),
+          ],
+        ],
       ),
     );
   }
