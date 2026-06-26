@@ -1019,13 +1019,27 @@ class _MondialTabState extends State<_MondialTab> {
   bool _loadingMore = false;
   int _page = 1;
   int _lastPage = 1;
+  String _selectedCountry = ''; // '' = Monde (tous)
+  List<Map<String, String>> _countries = [];
   late ScrollController _scrollController;
+
+  static const _countryNames = {
+    'CM': 'Cameroun', 'CN': 'Chine', 'NG': 'Nigeria', 'FR': 'France',
+    'US': 'USA', 'IN': 'Inde', 'PK': 'Pakistan', 'VN': 'Vietnam',
+    'TH': 'Thailande', 'TR': 'Turquie', 'DE': 'Allemagne', 'GB': 'UK',
+    'GH': 'Ghana', 'CI': 'Cote d\'Ivoire', 'SN': 'Senegal', 'GA': 'Gabon',
+    'CD': 'RD Congo', 'CG': 'Congo', 'MA': 'Maroc', 'TN': 'Tunisie',
+    'DZ': 'Algerie', 'ZA': 'Afrique du Sud', 'KE': 'Kenya', 'ET': 'Ethiopie',
+    'JP': 'Japon', 'KR': 'Coree du Sud', 'BR': 'Bresil', 'MX': 'Mexique',
+    'IT': 'Italie', 'ES': 'Espagne',
+  };
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
+    _loadCountries();
     _loadData();
   }
 
@@ -1042,11 +1056,45 @@ class _MondialTabState extends State<_MondialTab> {
     }
   }
 
+  Future<void> _loadCountries() async {
+    try {
+      // Charger les origines distinctes des produits
+      final res = await ApiService().get('/products', params: {'perPage': 100});
+      final data = res.data['data'] as List? ?? [];
+      final origins = <String>{};
+      for (final p in data) {
+        final origin = (p['origin'] as String?)?.toUpperCase() ?? '';
+        if (origin.isNotEmpty) origins.add(origin);
+      }
+      if (mounted) {
+        setState(() {
+          _countries = origins.map((code) => {
+            'code': code.toLowerCase(),
+            'name': _countryNames[code] ?? code,
+          }).toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _selectCountry(String countryCode) {
+    if (_selectedCountry == countryCode) return;
+    setState(() {
+      _selectedCountry = countryCode;
+      _loading = true;
+      _page = 1;
+      _products = [];
+    });
+    _loadData();
+  }
+
   Future<void> _loadMore() async {
     if (_loadingMore || _page >= _lastPage) return;
     setState(() => _loadingMore = true);
     try {
-      final res = await ApiService().get('/products', params: {'perPage': 20, 'page': _page + 1});
+      final params = <String, dynamic>{'perPage': 20, 'page': _page + 1};
+      if (_selectedCountry.isNotEmpty) params['origin'] = _selectedCountry.toUpperCase();
+      final res = await ApiService().get('/products', params: params);
       final data = res.data['data'] as List? ?? [];
       final meta = res.data['meta'] as Map<String, dynamic>? ?? {};
       if (mounted && data.isNotEmpty) {
@@ -1066,7 +1114,9 @@ class _MondialTabState extends State<_MondialTab> {
 
   Future<void> _loadData() async {
     try {
-      final res = await ApiService().get('/products', params: {'perPage': 20});
+      final params = <String, dynamic>{'perPage': 20};
+      if (_selectedCountry.isNotEmpty) params['origin'] = _selectedCountry.toUpperCase();
+      final res = await ApiService().get('/products', params: params);
       final data = res.data['data'] as List? ?? [];
       final meta = res.data['meta'] as Map<String, dynamic>? ?? {};
       if (mounted) {
@@ -1104,11 +1154,18 @@ class _MondialTabState extends State<_MondialTab> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
-              _CountryChip(label: 'Monde', countryCode: '', selected: true),
-              _CountryChip(label: 'Chine', countryCode: 'cn', selected: false),
-              _CountryChip(label: 'Pakistan', countryCode: 'pk', selected: false),
-              _CountryChip(label: 'Inde', countryCode: 'in', selected: false),
-              _CountryChip(label: 'Vietnam', countryCode: 'vn', selected: false),
+              GestureDetector(
+                onTap: () => _selectCountry(''),
+                child: _CountryChip(label: 'Monde', countryCode: '', selected: _selectedCountry.isEmpty),
+              ),
+              ..._countries.map((c) => GestureDetector(
+                onTap: () => _selectCountry(c['code']!),
+                child: _CountryChip(
+                  label: c['name']!,
+                  countryCode: c['code']!,
+                  selected: _selectedCountry == c['code'],
+                ),
+              )),
             ],
           ),
         ),
