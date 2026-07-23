@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_stripe/flutter_stripe.dart' as stripe;
 import '../../core/api_service.dart';
 import '../../core/shipping.dart';
 import '../../core/theme.dart';
@@ -13,7 +14,7 @@ import '../addresses/addresses_screen.dart';
 
 enum DeliveryMethod { standard, express, merciE }
 
-enum PaymentMethod { mtnMomo, orangeMoney, paypal }
+enum PaymentMethod { mtnMomo, orangeMoney, paypal, stripe }
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -35,6 +36,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // Step 2 - Paiement
   PaymentMethod _paymentMethod = PaymentMethod.mtnMomo;
   final TextEditingController _phoneController = TextEditingController(text: '');
+  final TextEditingController _cardNameController = TextEditingController();
+  final TextEditingController _cardNumberController = TextEditingController();
+  final TextEditingController _cardExpiryController = TextEditingController();
+  final TextEditingController _cardCvvController = TextEditingController();
+  bool _stripeCardComplete = false;
+  bool _stripeInitialized = false;
 
   // Step 3 - Confirmation
   bool _submitting = false;
@@ -61,7 +68,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void dispose() {
     _pageController.dispose();
     _phoneController.dispose();
+    _cardNameController.dispose();
+    _cardNumberController.dispose();
+    _cardExpiryController.dispose();
+    _cardCvvController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initStripe() async {
+    if (_stripeInitialized) return;
+    try {
+      final res = await ApiService().get('/payments/card/init');
+      final publishableKey = res.data?['publishableKey'] ?? '';
+      if (publishableKey.toString().isNotEmpty) {
+        stripe.Stripe.publishableKey = publishableKey;
+        _stripeInitialized = true;
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadDefaultAddress() async {
@@ -194,6 +217,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
+    // Validate card fields
+    if (_paymentMethod == PaymentMethod.stripe) {
+      if (_cardNameController.text.trim().isEmpty || !_stripeCardComplete) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Veuillez remplir tous les champs de la carte.'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -208,6 +244,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           break;
         case PaymentMethod.paypal:
           paymentMethodStr = 'PAYPAL';
+          break;
+        case PaymentMethod.stripe:
+          paymentMethodStr = 'STRIPE';
           break;
       }
 
@@ -224,8 +263,66 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final combinedOrderId = orderRes.data['data']?['combinedOrderId'];
       final orderNumber = orderRes.data['data']?['orderNumber'] ?? 'ORD-${100000 + Random().nextInt(900000)}';
 
-      // Step 3: Init payment for mobile money
+      // Step 3: Init payment
       if (combinedOrderId != null) {
+        if (_paymentMethod == PaymentMethod.stripe) {
+          // Step 1: Init payment on backend (creates PENDING payment records)
+          await ApiService().post('/payments/init', data: {
+            'combinedOrderId': combinedOrderId,
+            'method': 'STRIPE',
+          });
+
+          // Step 2: Ensure Stripe SDK is initialized
+          if (!_stripeInitialized) await _initStripe();
+
+          // Step 3: Create PaymentMethod using Stripe SDK (card data collected via CardField)
+          final paymentMethod = await stripe.Stripe.instance.createPaymentMethod(
+            params: stripe.PaymentMethodParams.card(
+              paymentMethodData: stripe.PaymentMethodData(
+                billingDetails: stripe.BillingDetails(
+                  name: _cardNameController.text.trim(),
+                ),
+              ),
+            ),
+          );
+
+          // Step 5: Send paymentMethodId to backend for processing
+          final processRes = await ApiService().post('/payments/card/process', data: {
+            'combinedOrderId': combinedOrderId,
+            'paymentMethodId': paymentMethod.id,
+            'cardholderName': _cardNameController.text.trim(),
+          });
+
+          final processData = processRes.data;
+
+          // Step 6: Handle 3D Secure if required
+          if (processData?['requires_action'] == true && processData?['payment_intent_client_secret'] != null) {
+            final clientSecret = processData['payment_intent_client_secret'] as String;
+            final confirmResult = await stripe.Stripe.instance.confirmPayment(
+              paymentIntentClientSecret: clientSecret,
+            );
+
+            if (confirmResult.status != stripe.PaymentIntentsStatus.Succeeded &&
+                confirmResult.status != stripe.PaymentIntentsStatus.RequiresCapture) {
+              throw Exception('Echec de la verification 3D Secure');
+            }
+
+            // Confirm on backend
+            await ApiService().post('/payments/card/confirm', data: {
+              'combinedOrderId': combinedOrderId,
+              'paymentIntentId': processData['payment_intent_id'],
+              'transactionId': processData['transaction_id'],
+            });
+          }
+
+          if (!mounted) return;
+          setState(() => _submitting = false);
+          cart.clear();
+          _showSuccessDialog(orderNumber.toString());
+          return;
+        }
+
+        // Mobile Money
         final payRes = await ApiService().post('/payments/init', data: {
           'combinedOrderId': combinedOrderId,
           'method': paymentMethodStr,
@@ -977,6 +1074,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             icon: Icons.payment,
             accentColor: AppColors.blue,
           ),
+          const SizedBox(height: 8),
+
+          // Carte bancaire
+          _buildPaymentOption(
+            method: PaymentMethod.stripe,
+            title: 'Carte bancaire',
+            subtitle: 'Visa, Mastercard, American Express',
+            icon: Icons.credit_card,
+            accentColor: const Color(0xFF4A90D9),
+          ),
 
           const SizedBox(height: 20),
 
@@ -1099,6 +1206,72 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ],
 
+          // Carte bancaire form
+          if (_paymentMethod == PaymentMethod.stripe) ...[
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF4A90D9).withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Nom du titulaire',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.dark),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _cardNameController,
+                    decoration: InputDecoration(
+                      hintText: 'Ex: Jean Dupont',
+                      hintStyle: TextStyle(color: AppColors.gray4),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.gray5)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.gray5)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF4A90D9))),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      isDense: true,
+                    ),
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Informations de carte',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.dark),
+                  ),
+                  const SizedBox(height: 6),
+                  stripe.CardField(
+                    onCardChanged: (card) {
+                      setState(() {
+                        _stripeCardComplete = card?.complete ?? false;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.gray5)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.gray5)),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF4A90D9))),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(Icons.lock, size: 14, color: AppColors.gray3),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Paiement sécurisé. Vos données sont chiffrées.',
+                        style: TextStyle(fontSize: 11, color: AppColors.gray3),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 24),
 
           // Security badges
@@ -1135,7 +1308,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }) {
     final isSelected = _paymentMethod == method;
     return GestureDetector(
-      onTap: () => setState(() => _paymentMethod = method),
+      onTap: () {
+        setState(() => _paymentMethod = method);
+        if (method == PaymentMethod.stripe) _initStripe();
+      },
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -1381,9 +1557,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             child: Row(
               children: [
                 Icon(
-                  _paymentMethod == PaymentMethod.paypal
-                      ? Icons.payment
-                      : Icons.phone_android,
+                  _paymentMethod == PaymentMethod.stripe
+                      ? Icons.credit_card
+                      : _paymentMethod == PaymentMethod.paypal
+                          ? Icons.payment
+                          : Icons.phone_android,
                   size: 18,
                   color: AppColors.gray2,
                 ),
@@ -1455,6 +1633,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return 'Orange Money$phone';
       case PaymentMethod.paypal:
         return 'PayPal';
+      case PaymentMethod.stripe:
+        return 'Carte bancaire';
     }
   }
 
@@ -1666,5 +1846,45 @@ class _PaymentPendingDialogState extends State<_PaymentPendingDialog> {
         ),
       ),
     );
+  }
+}
+
+/// Formatte le numero de carte avec des espaces tous les 4 chiffres
+class _CardNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(' ', '');
+    final buffer = StringBuffer();
+    for (int i = 0; i < digits.length; i++) {
+      if (i > 0 && i % 4 == 0) buffer.write(' ');
+      buffer.write(digits[i]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+/// Formatte la date d'expiration MM/YY
+class _ExpiryDateFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll('/', '');
+    if (digits.length >= 3) {
+      final formatted = '${digits.substring(0, 2)}/${digits.substring(2)}';
+      return TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+      );
+    }
+    return newValue;
   }
 }

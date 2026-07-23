@@ -55,6 +55,7 @@ dependencies:
   share_plus: ^10.1.4
   google_maps_flutter: ^2.10.0
   http: ^1.2.0
+  flutter_stripe: ^11.4.0
 
 dev_dependencies:
   flutter_test:

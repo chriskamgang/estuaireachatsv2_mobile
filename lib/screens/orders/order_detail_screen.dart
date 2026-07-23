@@ -243,7 +243,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _buildDeliveryAddress() {
-    final address = _order?['shippingAddress'] as Map<String, dynamic>?;
+    final address = (_order?['shippingAddress'] ?? _order?['address']) as Map<String, dynamic>?;
     final name = address?['name'] ?? address?['fullName'] ?? '';
     final phone = address?['phone'] ?? '';
     final street = address?['street'] ?? address?['address'] ?? '';
@@ -285,7 +285,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _buildProductList() {
-    final items = _order?['items'] as List? ?? [];
+    final items = (_order?['details'] ?? _order?['items']) as List? ?? [];
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -303,11 +303,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             final i = entry.key;
             final item = entry.value as Map<String, dynamic>;
             final product = item['product'] as Map<String, dynamic>?;
-            final images = product?['images'] as List?;
-            final imageUrl = (images != null && images.isNotEmpty) ? (images[0]['url'] ?? '') : '';
-            final name = product?['name'] ?? '';
+            // Support both details format (name/image directly) and nested product format
+            String imageUrl = item['image'] as String? ?? item['thumbnailUrl'] as String? ?? '';
+            if (imageUrl.isEmpty) {
+              final images = product?['images'] as List?;
+              imageUrl = (images != null && images.isNotEmpty) ? (images[0]['url'] ?? '') : '';
+            }
+            final name = item['name'] as String? ?? item['productName'] as String? ?? product?['name'] ?? '';
             final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
-            final price = (item['price'] as num?)?.toDouble() ?? 0;
+            final price = (item['price'] as num?)?.toDouble() ?? (item['unitPrice'] as num?)?.toDouble() ?? 0;
 
             return Column(
               children: [

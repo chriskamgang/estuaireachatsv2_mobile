@@ -157,7 +157,7 @@ class _OrderCard extends StatelessWidget {
 
   // Get first item info for display
   Map<String, dynamic>? get _firstItem {
-    final items = order['items'] as List?;
+    final items = (order['details'] ?? order['items']) as List?;
     if (items == null || items.isEmpty) return null;
     return items[0] as Map<String, dynamic>;
   }
@@ -165,13 +165,16 @@ class _OrderCard extends StatelessWidget {
   String get _productName {
     final item = _firstItem;
     if (item == null) return '';
-    final product = item['product'] as Map<String, dynamic>?;
-    return product?['name'] ?? '';
+    // API may return name directly (details format) or nested under product
+    return item['name'] ?? item['productName'] ?? (item['product'] as Map<String, dynamic>?)?['name'] ?? '';
   }
 
   String get _productImage {
     final item = _firstItem;
     if (item == null) return '';
+    // API may return image directly (details format) or nested under product.images
+    if (item['image'] != null && (item['image'] as String).isNotEmpty) return item['image'];
+    if (item['thumbnailUrl'] != null && (item['thumbnailUrl'] as String).isNotEmpty) return item['thumbnailUrl'];
     final product = item['product'] as Map<String, dynamic>?;
     final images = product?['images'] as List?;
     if (images == null || images.isEmpty) return '';
@@ -179,7 +182,7 @@ class _OrderCard extends StatelessWidget {
   }
 
   int get _totalQuantity {
-    final items = order['items'] as List? ?? [];
+    final items = (order['details'] ?? order['items']) as List? ?? [];
     int total = 0;
     for (final item in items) {
       total += ((item as Map)['quantity'] as num?)?.toInt() ?? 0;
